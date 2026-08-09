@@ -13,8 +13,9 @@
 #   UNIFY_MAX_CYCLES      0 = forever (default 0)
 #   UNIFY_OFFLINE_EVERY   run full offline every K cycles (default 1)
 #   UNIFY_LOG_ROOT        log root (default: <repo>/logs/runs)
-#   UNIFY_AUTO_ISSUE      post host issues to cybrid-systems/aura
-#                         (default 1 for continuous; denseness/llm never filed)
+#   UNIFY_AUTO_ISSUE      allow API create after 定界 (default 1); still requires
+#                         class=host + confidence=high from classify-failure.py
+#   UNIFY_SELF_EVOLVE     1 = MiniMax proposal for unify-self bugs (default 0)
 #   UNIFY_STOP_FILE       path; if exists, exit after current cycle
 #   UNIFY_AURA_REPO       default cybrid-systems/aura
 #
@@ -34,8 +35,10 @@ MAX_CYCLES="${UNIFY_MAX_CYCLES:-0}"
 OFFLINE_EVERY="${UNIFY_OFFLINE_EVERY:-1}"
 LOG_ROOT="${UNIFY_LOG_ROOT:-$ROOT/logs/runs}"
 STOP_FILE="${UNIFY_STOP_FILE:-$LOG_ROOT/STOP}"
-# Continuous defaults to auto-filing host residuals (detailed body + dedupe).
+# Allow create only after classifier confirms Aura host (should_file=true).
 export UNIFY_AUTO_ISSUE="${UNIFY_AUTO_ISSUE:-1}"
+# Optional MiniMax proposal for Unify-owned bugs (never auto-commit).
+export UNIFY_SELF_EVOLVE="${UNIFY_SELF_EVOLVE:-0}"
 
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 RUN_DIR="$LOG_ROOT/$RUN_ID"
@@ -117,7 +120,7 @@ total_fail=0
 total_host=0
 cycle=0
 
-# On any step failure: classify log → detailed draft → file host to Aura.
+# On step failure: 定界 → confirmed host files Aura; unify-self → self-evolve queue.
 file_failure() {
   local label="$1"
   local logf="$2"
@@ -125,28 +128,35 @@ file_failure() {
   local fail_copy="$RUN_DIR/failures/cycle$(printf '%04d' "$cycle")-${label}.log"
   cp -f "$logf" "$fail_copy" 2>/dev/null || true
 
-  local out class fp url=""
+  local out class fp conf action sf ss url=""
   out="$(mktemp)"
   set +e
   ./scripts/file-aura-issue.sh \
     --log "$logf" \
     --label "c${cycle}-${label}" \
     --cmd "$cmd" \
-    --notes "Continuous run_id=\`$RUN_ID\` cycle=$cycle step=\`$label\`. See also \`$fail_copy\`." \
+    --notes "Continuous run_id=\`$RUN_ID\` cycle=$cycle step=\`$label\`. Fail copy: \`$fail_copy\`." \
     >"$out" 2>&1
   local frc=$?
   set -e
-  cat "$out" | while IFS= read -r line; do log "  issue| $line"; done || true
+  while IFS= read -r line; do log "  issue| $line"; done <"$out" || true
 
-  class="$(grep -E '^class=' "$out" | tail -n1 | sed 's/^class=//;s/ fingerprint=.*//')" || class=""
-  fp="$(grep -E 'fingerprint=' "$out" | tail -n1 | sed 's/.*fingerprint=//;s/ title=.*//')" || fp=""
-  url="$(grep -E '^(created|skip):' "$out" | tail -n1 | sed 's/^created: //;s/^skip: already filed //;s/^skip: open\/existing issue //;s/^skip: meta has url //')" || url=""
+  class="$(grep -E '^class=' "$out" | tail -n1 | awk -F'[= ]' '{print $2}')" || class=""
+  conf="$(grep -E '^class=' "$out" | tail -n1 | sed -n 's/.*confidence=\([^ ]*\).*/\1/p')" || conf=""
+  fp="$(grep -E 'fingerprint=' "$out" | tail -n1 | sed -n 's/.*fingerprint=\([^ ]*\).*/\1/p')" || fp=""
+  action="$(grep -E 'action=' "$out" | tail -n1 | sed -n 's/.*action=\([^ ]*\).*/\1/p')" || action=""
+  sf="$(grep -E 'should_file=' "$out" | tail -n1 | sed -n 's/.*should_file=\([^ ]*\).*/\1/p')" || sf=""
+  ss="$(grep -E 'should_self_evolve=' "$out" | tail -n1 | sed -n 's/.*should_self_evolve=\([^ ]*\).*/\1/p')" || ss=""
+  url="$(grep -E '^(created|skip):' "$out" | tail -n1 | sed -E 's/^(created: |skip: already filed |skip: open\/existing issue |skip: meta has url )//')" || url=""
 
-  if [[ "$class" == "host" ]]; then
+  if [[ "$sf" == "1" || "$url" == https://* ]]; then
     total_host=$((total_host + 1))
-    event host_flag label "$label" fingerprint "$fp" url "$url" rc "$frc"
+    event host_filed label "$label" fingerprint "$fp" confidence "$conf" url "$url" rc "$frc"
+  elif [[ "$ss" == "1" || "$class" == "unify-self" ]]; then
+    event self_evolve label "$label" fingerprint "$fp" class "$class" rc "$frc"
   else
-    event fail_classified label "$label" class "${class:-unknown}" fingerprint "$fp" rc "$frc"
+    event fail_classified label "$label" class "${class:-unknown}" confidence "$conf" \
+      action "$action" fingerprint "$fp" rc "$frc"
   fi
   rm -f "$out"
 }

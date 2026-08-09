@@ -10,12 +10,12 @@
 #        ./scripts/file-aura-issue.sh --title T --fingerprint F \
 #            --body-file path.md --class host
 #
-# Policy:
-#   - Only class=host is eligible for cybrid-systems/aura.
-#   - denseness / llm → draft under notes/issue-drafts/ as skipped-class (no API).
-#   - UNIFY_AUTO_ISSUE=1 (default when --log and class=host) creates the GitHub issue.
-#   - Set UNIFY_AUTO_ISSUE=0 to force draft-only.
-#   - Dedupes by fingerprint draft file + open-issue title search.
+# Policy (定界 first):
+#   - Only class=host AND confidence=high AND should_file=true → cybrid-systems/aura
+#   - unify-self → enqueue-self-evolve (never Aura)
+#   - denseness / llm / unknown / host@medium|low → draft only
+#   - UNIFY_AUTO_ISSUE=1 required to create (continuous sets this; still gated by should_file)
+#   - Dedupes by fingerprint + GitHub search
 #
 # Auth: GH_TOKEN / GITHUB_TOKEN / ~/.github-token ; gh or curl.
 set -euo pipefail
@@ -35,6 +35,10 @@ NOTES=""
 REPO="${UNIFY_AURA_REPO:-cybrid-systems/aura}"
 LABELS="${UNIFY_ISSUE_LABELS:-bug}"
 FORCE_DRAFT_ONLY=0
+SHOULD_FILE=""
+SHOULD_SELF=""
+CONFIDENCE=""
+ACTION=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -94,6 +98,10 @@ if [[ -n "$LOG_FILE" ]]; then
   TITLE="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["title"])' <<<"$CLASSIFY_JSON")"
   CLASS="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["class"])' <<<"$CLASSIFY_JSON")"
   FINGERPRINT="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["fingerprint"])' <<<"$CLASSIFY_JSON")"
+  CONFIDENCE="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("confidence",""))' <<<"$CLASSIFY_JSON")"
+  ACTION="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("action",""))' <<<"$CLASSIFY_JSON")"
+  SHOULD_FILE="$(python3 -c 'import json,sys; print("1" if json.load(sys.stdin).get("should_file") else "0")' <<<"$CLASSIFY_JSON")"
+  SHOULD_SELF="$(python3 -c 'import json,sys; print("1" if json.load(sys.stdin).get("should_self_evolve") else "0")' <<<"$CLASSIFY_JSON")"
   BODY_FILE="$(mktemp)"
   python3 -c 'import json,sys; print(json.load(sys.stdin)["body"])' <<<"$CLASSIFY_JSON" >"$BODY_FILE"
   trap 'rm -f "$BODY_FILE"' EXIT
@@ -161,29 +169,47 @@ print(meta_path)
 PY
 
 echo "drafted: $DRAFT"
-echo "class=$CLASS fingerprint=$SAFE_FP title=$TITLE"
+echo "class=$CLASS confidence=${CONFIDENCE:-n/a} action=${ACTION:-n/a} fingerprint=$SAFE_FP title=$TITLE"
+echo "should_file=${SHOULD_FILE:-?} should_self_evolve=${SHOULD_SELF:-?}"
 
-# Non-host: never hit Aura tracker
-if [[ "$CLASS" != "host" ]]; then
-  echo "refuse-api: class=$CLASS (only host files to $REPO); draft kept"
+# Unify-owned → self-evolve queue, never Aura
+if [[ "$SHOULD_SELF" == "1" || "$CLASS" == "unify-self" ]]; then
+  echo "refuse-api: unify-self → enqueue self-evolve (not Aura)"
+  if [[ -n "$LOG_FILE" ]]; then
+    ./scripts/enqueue-self-evolve.sh \
+      --log "$LOG_FILE" \
+      --label "$LABEL" \
+      --cmd "$CMD" \
+      --notes "$NOTES" || true
+  fi
   exit 0
 fi
 
-# Auto-issue policy: default ON for --log host path unless explicitly 0 or --draft-only
-AUTO="${UNIFY_AUTO_ISSUE:-}"
-if [[ -z "$AUTO" ]]; then
-  if [[ -n "$LOG_FILE" ]]; then
-    AUTO=1
-  else
-    AUTO=0
-  fi
+# Hard gate: only confirmed host may hit Aura API
+if [[ "$CLASS" != "host" ]]; then
+  echo "refuse-api: class=$CLASS (not host); draft kept"
+  exit 0
 fi
+
+if [[ -n "$LOG_FILE" && "$SHOULD_FILE" != "1" ]]; then
+  echo "refuse-api: host not confirmed (confidence=${CONFIDENCE:-unknown} should_file=0) — human 定界 required; draft kept"
+  exit 0
+fi
+
+# Legacy --body-file path without classifier: require explicit UNIFY_FORCE_HOST=1
+if [[ -z "$LOG_FILE" && "${UNIFY_FORCE_HOST:-0}" != "1" ]]; then
+  echo "refuse-api: legacy body-file without --log requires UNIFY_FORCE_HOST=1 after human 定界; draft kept"
+  exit 0
+fi
+
+# Auto-issue: still need UNIFY_AUTO_ISSUE=1 (continuous sets default 1)
+AUTO="${UNIFY_AUTO_ISSUE:-0}"
 if [[ "$FORCE_DRAFT_ONLY" == "1" ]]; then
   AUTO=0
 fi
 
 if [[ "$AUTO" != "1" ]]; then
-  echo "dry-run: set UNIFY_AUTO_ISSUE=1 to create issue on $REPO (draft kept)"
+  echo "dry-run: set UNIFY_AUTO_ISSUE=1 to create issue on $REPO (draft kept; 定界 already passed)"
   exit 0
 fi
 

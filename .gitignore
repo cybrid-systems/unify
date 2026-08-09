@@ -5,6 +5,8 @@ notes/issue-drafts/*.md
 notes/issue-drafts/*.json
 !notes/issue-drafts/.gitkeep
 notes/issue-drafts/*.url
+notes/self-evolve-queue.jsonl
+notes/self-evolve/
 .env
 *.pem
 keys/

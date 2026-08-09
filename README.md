@@ -96,29 +96,32 @@ UNIFY_OVERNIGHT_N=20 ./scripts/overnight.sh
 | `logs/runs/latest/failures/` | copied failing logs + issue bodies |
 | `logs/runs/latest/cycles/NNNN/` | per-cycle offline/live/git logs |
 
-### Filing host residuals → Aura
+### 定界 → Aura issue **or** self-evolve
 
-On step failure the continuous runner runs `classify-failure.py` then
-`file-aura-issue.sh --log …`:
+Failures are classified **before** any GitHub write:
 
-| Class | Action |
-|-------|--------|
-| `host` | detailed draft + **create issue** on `cybrid-systems/aura` (deduped by fingerprint; `UNIFY_AUTO_ISSUE=0` → draft only) |
-| `denseness` / `llm` / `unknown` | draft kept under `notes/issue-drafts/` — **not** filed to Aura |
+| Class / confidence | Action |
+|--------------------|--------|
+| `host` + **high** (`should_file`) | detailed draft + create on `cybrid-systems/aura` (if `UNIFY_AUTO_ISSUE=1`) |
+| `host` + medium/low | draft only — human 定界, no auto-file |
+| `unify-self` | queue `notes/self-evolve/` — fix in Unify, **never** Aura |
+| `denseness` | denseness-report / draft only |
+| `llm` | retry / draft only |
 
 ```bash
-# Manual from a log
-./scripts/file-aura-issue.sh \
-  --log logs/runs/latest/failures/some.log \
-  --label live-003 \
+# Classify only
+python3 scripts/classify-failure.py --log path.log --label x | jq '{class,confidence,should_file,should_self_evolve,action,reasons}'
+
+# File (gated by should_file)
+./scripts/file-aura-issue.sh --log path.log --label live-003 \
   --cmd './scripts/run-aura.sh examples/02-live-evolve/main.aura'
 
-# Draft only
-UNIFY_AUTO_ISSUE=0 ./scripts/file-aura-issue.sh --log path.log --label x
+# Unify-self + optional MiniMax proposal (not auto-applied)
+UNIFY_SELF_EVOLVE=1 ./scripts/enqueue-self-evolve.sh --log path.log --label x
 ```
 
-Auth: `~/.github-token` (or `GH_TOKEN`). Issue body includes env, unify HEAD,
-extracted diagnostics, repro, and log tail.
+Auth: `~/.github-token`. Soft signals (capability / git alone / set-code alone)
+never auto-file.
 
 ## Issue policy (Aura)
 
