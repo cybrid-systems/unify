@@ -22,6 +22,8 @@ required=(
   scripts/env-minimax.sh
   scripts/file-aura-issue.sh
   scripts/overnight.sh
+  scripts/run-continuous.sh
+  scripts/status.sh
 )
 
 echo "=== Unify structure check ==="

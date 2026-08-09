@@ -1,70 +1,20 @@
 #!/usr/bin/env bash
-# Overnight synthesis: offline compose + N live evolve rounds (MiniMax-M3).
+# Overnight / finite continuous synthesis (wrapper around run-continuous.sh).
+#
+# Default: 20 live rounds in one cycle then exit (legacy overnight shape).
+# For forever loop: UNIFY_MAX_CYCLES=0 ./scripts/run-continuous.sh
+#
 # Issues: draft-only unless UNIFY_AUTO_ISSUE=1.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-N="${UNIFY_OVERNIGHT_N:-20}"
-LOG_DIR="${UNIFY_LOG_DIR:-/tmp/unify-overnight}"
-mkdir -p "$LOG_DIR"
+export UNIFY_LIVE_N="${UNIFY_OVERNIGHT_N:-${UNIFY_LIVE_N:-20}}"
+export UNIFY_MAX_CYCLES="${UNIFY_MAX_CYCLES:-1}"
+export UNIFY_SLEEP_SEC="${UNIFY_SLEEP_SEC:-0}"
+export UNIFY_OFFLINE_EVERY="${UNIFY_OFFLINE_EVERY:-1}"
+export UNIFY_LOG_ROOT="${UNIFY_LOG_DIR:-${UNIFY_LOG_ROOT:-$ROOT/logs/runs}}"
 
-echo "[overnight] offline compose"
-./scripts/run-offline.sh | tee "$LOG_DIR/offline.log"
-
-if [[ ! -f "${MINIMAX_KEY_FILE:-$HOME/code/keys/minimax}" ]]; then
-  echo "[overnight] no minimax key; skip live rounds"
-  exit 0
-fi
-
-# shellcheck disable=SC1091
-source ./scripts/env-minimax.sh
-
-echo "[overnight] live evolve N=$N"
-ok=0
-fail=0
-for i in $(seq 1 "$N"); do
-  log="$LOG_DIR/live-$(printf '%03d' "$i").log"
-  echo "---- round $i/$N ----"
-  if ./scripts/run-aura.sh examples/02-live-evolve/main.aura >"$log" 2>&1; then
-    if grep -q 'RESULT pass example=02-live-evolve' "$log"; then
-      ok=$((ok + 1))
-    else
-      fail=$((fail + 1))
-      # Host-ish signals → draft (never denseness-only)
-      if grep -qE 'unbound variable|recursion depth exceeded|SIGSEGV|internal error' "$log"; then
-        fp="overnight-$(date -u +%Y%m%d)-r$(printf '%03d' "$i")"
-        body="$LOG_DIR/body-$fp.md"
-        {
-          echo "## Summary"
-          echo
-          echo "Unify overnight live-evolve round $i hit a host-like error."
-          echo
-          echo "## Repro"
-          echo
-          echo '```bash'
-          echo "source ./scripts/env-minimax.sh"
-          echo "./scripts/run-aura.sh examples/02-live-evolve/main.aura"
-          echo '```'
-          echo
-          echo "## Log tail"
-          echo
-          echo '```'
-          tail -n 80 "$log"
-          echo '```'
-        } >"$body"
-        ./scripts/file-aura-issue.sh \
-          --title "[Unify] host residual in live-evolve round $i" \
-          --class host \
-          --fingerprint "$fp" \
-          --body-file "$body" || true
-      fi
-    fi
-  else
-    fail=$((fail + 1))
-  fi
-done
-
-echo "[overnight] ok=$ok fail=$fail total=$N"
-echo "logs: $LOG_DIR"
+echo "[overnight] LIVE_N=$UNIFY_LIVE_N MAX_CYCLES=$UNIFY_MAX_CYCLES LOG_ROOT=$UNIFY_LOG_ROOT"
+exec ./scripts/run-continuous.sh

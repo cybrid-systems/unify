@@ -76,10 +76,25 @@ Override with `AURA_BIN`, `AURA_ROOT`, `AETHER_ROOT`, etc.
 source ./scripts/env-minimax.sh
 ./scripts/run-aura.sh examples/02-live-evolve/main.aura
 
-# Overnight (draft issues only unless UNIFY_AUTO_ISSUE=1)
+# Continuous loop (offline + live×N + git probe; draft issues unless UNIFY_AUTO_ISSUE=1)
 source ./scripts/env-minimax.sh
-./scripts/overnight.sh
+./scripts/run-continuous.sh          # forever; logs under logs/runs/latest/
+./scripts/status.sh                  # pid / last events / failures
+# touch logs/runs/STOP               # graceful stop after current cycle
+
+# Finite overnight (one cycle, N live rounds)
+UNIFY_OVERNIGHT_N=20 ./scripts/overnight.sh
 ```
+
+### Logs (continuous)
+
+| Path | Content |
+|------|---------|
+| `logs/runs/latest/master.log` | timestamped step stream |
+| `logs/runs/latest/events.jsonl` | machine-readable events |
+| `logs/runs/latest/SUMMARY.md` | human cycle summary |
+| `logs/runs/latest/failures/` | copied failing logs + issue bodies |
+| `logs/runs/latest/cycles/NNNN/` | per-cycle offline/live/git logs |
 
 ## Issue policy (Aura)
 
