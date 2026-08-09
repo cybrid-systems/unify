@@ -10,3 +10,4 @@
 {"ts": "2026-08-09T04:08Z", "from_generation": 9, "to_generation": 10, "factor": 21, "body": "(lambda (x) (* x 21))", "decision": "select", "candidates_tried": 1, "candidates_n": 1, "mode": "multi-sandbox-select"}
 {"ts": "2026-08-09T04:09Z", "from_generation": 10, "to_generation": 11, "factor": 23, "body": "(lambda (x) (* x 23))", "decision": "select", "candidates_tried": 1, "candidates_n": 1, "mode": "multi-sandbox-select"}
 {"ts": "2026-08-09T04:10Z", "from_generation": 11, "to_generation": 12, "factor": 25, "body": "(lambda (x) (* x 25))", "decision": "select", "candidates_tried": 1, "candidates_n": 1, "mode": "multi-sandbox-select"}
+{"ts": "2026-08-09T04:12Z", "from_generation": 12, "to_generation": 13, "factor": 27, "body": "(lambda (x) (* x 27))", "decision": "select", "candidates_tried": 1, "candidates_n": 1, "mode": "multi-sandbox-select"}
