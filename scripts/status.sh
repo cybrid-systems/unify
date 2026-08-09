@@ -115,6 +115,9 @@ if run_dir and (run_dir / "events.jsonl").is_file():
                 current = line.split("] ", 1)[-1].strip()
                 break
 
+if cycle_now is not None and (not cycle_line or f"cycle={cycle_now}" not in cycle_line.replace(" ","")):
+    # mid-cycle: status.txt only updates at cycle_end
+    cycle_line = f"cycle={cycle_now} (in progress)"
 print(f"  activity {current}")
 if cycle_line:
     print(f"  cycle    {cycle_line}")
