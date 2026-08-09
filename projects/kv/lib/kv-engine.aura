@@ -47,7 +47,7 @@
 (define (kv:_mk-eng body index cache stats policy)
   (list (quote kv-engine) body index cache stats policy))
 
-(define (kv:_default-policy) (list "hybrid" 8 32))
+(define (kv:_default-policy) (list "alist" 0 9999))
 (define (kv:_zero-stats) (list 0 0 0 0 0))
 
 (define (kv:_pol-mode p) (list-ref p 0))

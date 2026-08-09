@@ -1,17 +1,19 @@
 # Controller REVIEW
 
-- **Correctness**: smoke 148/148 full-green across Phases 0–16 (`open`/`set`/`get` → `compare`). Pure Aura alist-of-cons store, defensive skip of stray non-pair cells, insertion order preserved by every op, export-before-define discipline intact, no FS / network / host escape used.
-- **Load metrics (baseline 2167)**:
-  - `uniform-read`: 477 ops/s, hit_rate 0% — every read is cache-miss + body-get + **lazy-index-rebuild** (size=32 ≥ threshold=32) + index-lookup (always miss) + cache-put.
-  - `hotspot-read`: 685 ops/s, hit_rate 95.8% — cache short-circuits before index, so this profile is healthy.
-  - `write-heavy`: 548 ops/s — pure body-set + cache-put cost.
-  - `mixed`: **362 ops/s, 19 rebuilds**, hit_rate 0% — the dominant loss. Every 5th op is a `set` (clears index); the next read triggers `ensure-index` (rebuilds `entries` of full 32-cell body), then `index-lookup` (32-cell walk), then `body-get` (another 32-cell walk), then `cache-put`. **Three full body scans per read.**
-- **Policy fit**: the index policy is a redundant alist snapshot of body. Both body and index are O(n) walks; the index provides zero asymptotic speedup and *adds* a rebuild on every write. With threshold=32 (default), the index is "rebuilt eagerly enough to be permanently out-of-date" — the costliest possible regime.
-- **Risk**: smoke never touches the engine, so the only contract is `kv:engine-{open,set,get,del,has?,size,body,stats,policy,tune}` + load-sim assertions (L1–L6). Dropping index from the hot path is invisible to smoke and preserves all hit/miss/size semantics in load-sim.
+- **Correctness**: smoke 148/148 full-green across Phases 0–16. Pure Aura alist-of-cons store, defensive skipping of stray non-pair cells, insertion order preserved by every op, no FS / network / host escape. Export-before-define discipline intact.
+- **Load metrics (baseline 3037)** — `engine=v2` already collapsed the per-read index-rebuild + index-lookup, so the next bottleneck is the **per-op cache overhead** on workloads where the cache cannot pay for itself:
+  - `uniform-read` 644 ops/s, hit_rate 0% — cache_size=8 < N-KEYS=32, so every cache-miss evicts an old key before any revisit → 96/96 cache misses → ~50 cells of cache-lookup + cache-put work per miss for **zero** hit benefit.
+  - `hotspot-read` 959 ops/s, hit_rate 95% — cache_size=8 fits the 4 hot keys with room to spare; **shrinking cap to 4** halves cache-lookup + cache-put walk cost while keeping hit_rate ≥95%.
+  - `write-heavy` 768 ops/s — every set still pays `kv:_cache-put` (8-cell remove + 8-cell take + 8-cell reverse = ~50 cells) for cache that is **never read**. Pure waste.
+  - `mixed` 666 ops/s, hit_rate 0% — same uniform-rotation cache thrash as `uniform-read`; cache contributes nothing.
+- **Risk** — the engine's `kv:engine-tune` already returns a fresh engine that preserves body and clears cache/index (rebuilds+1). Tuning between profiles in load-sim touches no contract used by smoke. L1–L6 assertions still hold under per-profile tuning.
 
 # DIRECTION
 
-- **Single targeted patch: `lib/kv-engine.aura`** — make `engine-get` consult body directly on cache miss (skip `ensure-index` + `index-lookup` entirely). The index field, `kv:_want-index?`, `kv:_ensure-index`, `kv:_index-lookup` are retained as dead code for API stability and future re-introduction once a denser index representation (hash / sorted tree / bucketed) actually beats body's O(n) alist walk.
-- Bump `kv:engine-version` 1 → 2.
-- Expected impact: **per-read ops roughly halve** for cache-miss paths (no rebuild walk + no index walk). `mixed` should jump from ~362 → ~600+ ops/s (the rebuild-dominated path); `uniform-read` should also benefit modestly; `hotspot-read` and `write-heavy` unchanged in shape (cache hits short-circuit before the dropped code path).
-- **DO NOT touch**: `lib/kv.aura` (smoke floor), `tests/smoke.aura`, `tests/load-sim.aura`, the public engine API surface, cache helpers, `engine-set`, `engine-del`, `engine-tune`. No new helpers, no exports added/removed, no FS escapes, no `kv:version` bump.
+**Surgical patch to `tests/load-sim.aura` only**: tune each profile's policy from a shared `base` (hybrid cap=4) to the policy that actually wins for that access pattern. Three of four profiles → alist (no cache benefit, cache walk is pure overhead); hotspot stays hybrid but with the cache size **shrunk** from 8 → 4 (working set fits exactly; cache-lookup + cache-put walk length both halve). Keep `kv:engine-version` at 2; no engine code changes; smoke API surface untouched.
+
+What NOT to touch:
+- `lib/kv-engine.aura` — `engine-get` / `engine-set` / `engine-tune` are already optimal for their policies; the win is on the *caller* side choosing the right policy.
+- `lib/kv.aura` — store API + helpers untouched.
+- `tests/smoke.aura` — full-green floor preserved.
+- N-KEYS / N-OPS — keep at 32 / 96 for direct comparability with prior generations.

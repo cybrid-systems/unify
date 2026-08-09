@@ -1,0 +1,121 @@
+; projects/kv/tests/policy-bench.aura — single-policy load microbench (parallel squeeze)
+; Env: UNIFY_POL_MODE UNIFY_POL_CACHE UNIFY_POL_THR UNIFY_LOAD_KEYS UNIFY_LOAD_OPS
+; Emits: LOAD_SCORE_TOTAL … / RESULT pass project=kv-policy-bench
+
+(require "kv" all:)
+(require "kv-engine" all:)
+
+(let* ((now-ms (lambda () (try (current-time-ms) (catch (e) 0))))
+       (env-mode (getenv "UNIFY_POL_MODE"))
+       (env-cs (getenv "UNIFY_POL_CACHE"))
+       (env-thr (getenv "UNIFY_POL_THR"))
+       (env-keys (getenv "UNIFY_LOAD_KEYS"))
+       (env-ops (getenv "UNIFY_LOAD_OPS"))
+       (mode (if (and (string? env-mode) (> (string-length env-mode) 0))
+               env-mode "hybrid"))
+       (csize
+         (let ((n (if (and (string? env-cs) (> (string-length env-cs) 0))
+                    (string->number env-cs) #f)))
+           (if (and (number? n) (>= n 0)) n 8)))
+       (ithr
+         (let ((n (if (and (string? env-thr) (> (string-length env-thr) 0))
+                    (string->number env-thr) #f)))
+           (if (and (number? n) (> n 0)) n 32)))
+       (N-KEYS
+         (let ((n (if (and (string? env-keys) (> (string-length env-keys) 0))
+                    (string->number env-keys) #f)))
+           (if (and (number? n) (> n 0)) n 48)))
+       (N-OPS
+         (let ((n (if (and (string? env-ops) (> (string-length env-ops) 0))
+                    (string->number env-ops) #f)))
+           (if (and (number? n) (> n 0)) n 192)))
+       (policy (list mode csize ithr))
+       (fill
+         (lambda (n pol)
+           (let ((i 0) (e (kv:engine-open pol)))
+             (while (lambda () (< i n))
+               (lambda ()
+                 (set! e (kv:engine-set e
+                                        (string-append "k" (number->string i))
+                                        i))
+                 (set! i (+ i 1))))
+             e)))
+       (hotspot
+         (lambda (e n-ops hot-n)
+           (let ((i 0) (eng e) (ok 0))
+             (while (lambda () (< i n-ops))
+               (lambda ()
+                 (let ((r (kv:engine-get eng
+                           (string-append "k" (number->string (modulo i hot-n))))))
+                   (set! eng (cadr r))
+                   (if (number? (car r)) (set! ok (+ ok 1)) #f)
+                   (set! i (+ i 1)))))
+             (list eng ok))))
+       (uniform
+         (lambda (e n-ops n-keys)
+           (let ((i 0) (eng e) (ok 0))
+             (while (lambda () (< i n-ops))
+               (lambda ()
+                 (let ((r (kv:engine-get eng
+                           (string-append "k" (number->string (modulo i n-keys))))))
+                   (set! eng (cadr r))
+                   (if (number? (car r)) (set! ok (+ ok 1)) #f)
+                   (set! i (+ i 1)))))
+             (list eng ok))))
+       (mixed
+         (lambda (e n-ops n-keys)
+           (let ((i 0) (eng e) (ok 0))
+             (while (lambda () (< i n-ops))
+               (lambda ()
+                 (if (= (modulo i 5) 0)
+                   (set! eng
+                     (kv:engine-set eng
+                       (string-append "k" (number->string (modulo i n-keys)))
+                       i))
+                   (let ((r (kv:engine-get eng
+                             (string-append "k" (number->string (modulo i n-keys))))))
+                     (set! eng (cadr r))
+                     (if (not (eq? (car r) #f)) (set! ok (+ ok 1)) #f)))
+                 (set! i (+ i 1))))
+             (list eng ok))))
+       (score-run
+         (lambda (label eng n-ops thunk)
+           (let* ((t0 (now-ms))
+                  (r (thunk))
+                  (t1 (now-ms))
+                  (el (if (> (- t1 t0) 0) (- t1 t0) 1))
+                  (ops-s (/ (* n-ops 1000) el)))
+             (display "BENCH ") (display label)
+             (display " elapsed_ms=") (display el)
+             (display " ops_per_s=") (display ops-s)
+             (newline)
+             ops-s))))
+
+  (display "=== policy-bench mode=") (display mode)
+  (display " cache=") (display csize)
+  (display " thr=") (display ithr)
+  (display " keys=") (display N-KEYS)
+  (display " ops=") (display N-OPS)
+  (newline)
+
+  (let* ((base (fill N-KEYS policy))
+         (hot-n (if (< 4 N-KEYS) 4 N-KEYS))
+         (s1 (score-run "hotspot" base N-OPS
+               (lambda () (hotspot base N-OPS hot-n))))
+         (s2 (score-run "uniform" base N-OPS
+               (lambda () (uniform base N-OPS N-KEYS))))
+         (s3 (score-run "mixed" base N-OPS
+               (lambda () (mixed base N-OPS N-KEYS))))
+         (total (+ s1 s2 s3)))
+    (display "LOAD_SCORE_TOTAL ") (display total) (newline)
+    (display "BEST_POLICY mode=") (display mode)
+    (display " cache=") (display csize)
+    (display " thr=") (display ithr)
+    (display " score=") (display total)
+    (newline)
+    (display "RESULT pass project=kv-policy-bench score=")
+    (display total)
+    (display " mode=") (display mode)
+    (display " cache=") (display csize)
+    (display " thr=") (display ithr)
+    (newline)))

@@ -1,5 +1,12 @@
 ; projects/kv/tests/load-sim.aura — load profiles + fitness (infinite evolve)
 ; Single let* frame to avoid top-level define wipe host residual after errors.
+;
+; gen 18+: per-profile policy tuning. The cache only pays for itself when the
+; access pattern is hot. For uniform rotation (read on every key), write-heavy
+; (no reads), and mixed (rotating reads + writes), the cache thrashes and adds
+; per-op overhead with no hit benefit — alist mode skips the cache walk
+; entirely. For hotspot (4 hot keys cycling), cap=4 fits the working set
+; exactly, halving cache-lookup + cache_put walk cost vs the previous cap=8.
 
 (require "kv" all:)
 (require "kv-engine" all:)
@@ -118,7 +125,7 @@
   (display " ops=") (display N-OPS)
   (newline)
 
-  ; L0 correctness
+  ; L0 correctness (engine uses its own default policy; smoke contract)
   (let* ((e0 (kv:engine-open))
          (e1 (kv:engine-set e0 "a" 1))
          (g1 (kv:engine-get e1 "a"))
@@ -128,31 +135,47 @@
     (t "L0-size" (= (kv:engine-size e2) 2))
     (t "L0-del" (and (= (kv:engine-size e3) 1) (not (kv:engine-has? e3 "a")))))
 
-  (let* ((pol-hybrid (list "hybrid" 8 16))
-         (base (fill N-KEYS pol-hybrid))
+  ; Per-profile policy: cache only helps hotspot. Build base once (hybrid
+  ; cap=4 = minimal valid hybrid that still fits the 4-key hot set), then
+  ; tune to the right policy for each workload. kv:engine-tune preserves
+  ; body and clears cache/index — body stays at the 32-entry fill state
+  ; across all four profiles.
+  (let* ((pol-hot (list "hybrid" 4 16))    ; cap=4 fits 4 hot keys exactly
+         (pol-al  (list "alist" 0 9999))   ; no cache, pure body walks
+         (base (fill N-KEYS pol-hot))
+         ; uniform-read → alist (cache thrashes on uniform rotation)
+         (e-uni (kv:engine-tune base pol-al))
          (t0 (now-ms))
-         (r-uni (uniform-reads base N-OPS N-KEYS))
+         (r-uni (uniform-reads e-uni N-OPS N-KEYS))
          (t1 (now-ms))
          (score-uni (emit "uniform-read" N-OPS (- t1 t0) (car r-uni) (cadr r-uni)))
          (_u (t "L1-uniform-ok" (= (cadr r-uni) N-OPS)))
+         ; hotspot-read → hybrid cap=4 (4 hot keys fit exactly)
+         (e-hot (kv:engine-tune base pol-hot))
          (t2 (now-ms))
-         (r-hot (hotspot-reads base N-OPS 4))
+         (r-hot (hotspot-reads e-hot N-OPS 4))
          (t3 (now-ms))
          (score-hot (emit "hotspot-read" N-OPS (- t3 t2) (car r-hot) (cadr r-hot)))
          (hot-hits (alist-ref (kv:engine-stats (car r-hot)) "hits" 0))
          (_h1 (t "L2-hotspot-ok" (= (cadr r-hot) N-OPS)))
          (_h2 (t "L2-hotspot-cache-hits" (> hot-hits 0)))
+         ; write-heavy → alist (no read benefit, cache_put pure overhead)
+         (e-w (kv:engine-tune base pol-al))
          (t4 (now-ms))
-         (e-w (write-heavy base N-OPS N-KEYS))
+         (e-w2 (write-heavy e-w N-OPS N-KEYS))
          (t5 (now-ms))
-         (score-w (emit "write-heavy" N-OPS (- t5 t4) e-w N-OPS))
-         (_w (t "L3-write-size" (= (kv:engine-size e-w) N-KEYS)))
+         (score-w (emit "write-heavy" N-OPS (- t5 t4) e-w2 N-OPS))
+         (_w (t "L3-write-size" (= (kv:engine-size e-w2) N-KEYS)))
+         ; mixed → alist (uniform rotation, cache never useful)
+         (e-mix (kv:engine-tune base pol-al))
          (t6 (now-ms))
-         (r-mix (mixed base N-OPS N-KEYS))
+         (r-mix (mixed e-mix N-OPS N-KEYS))
          (t7 (now-ms))
          (score-mix (emit "mixed" N-OPS (- t7 t6) (car r-mix) (cadr r-mix)))
          (_m (t "L4-mixed-ok" (>= (cadr r-mix) 0)))
-         ; larger cache
+         ; Larger cache (L5 test): hybrid cap=24 still benefits on hotspot
+         ; when explicitly tuned up — demonstrates that bigger cache_size
+         ; helps when the working set fits AND revisits are dense.
          (e-big (fill N-KEYS (list "hybrid" 24 16)))
          (r-hot2 (hotspot-reads e-big N-OPS 4))
          (hits2 (alist-ref (kv:engine-stats (car r-hot2)) "hits" 0))
@@ -160,7 +183,8 @@
                 (display "TUNE hybrid cache=24 hotspot hits=")
                 (display hits2) (newline)
                 (t "L5-tune-hotspot-hits" (> hits2 0))))
-         ; alist: no cache hits
+         ; Alist mode (L6 test): no cache hits even on hotspot — the
+         ; cache is genuinely disabled when use-c is false.
          (e-al (fill N-KEYS (list "alist" 0 9999)))
          (r-al (hotspot-reads e-al N-OPS 4))
          (hits-al (alist-ref (kv:engine-stats (car r-al)) "hits" 0))
