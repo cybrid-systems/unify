@@ -1,0 +1,84 @@
+; projects/kv/lib/kv.aura — mini KV store (project-level evolve subject)
+; Phase 0..1: open + set/get + del/has?/size. Phase 2: keys/clear/overwrite.
+; Form order: export before require.
+
+(export kv:version
+        kv:open
+        kv:set
+        kv:get
+        kv:del
+        kv:has?
+        kv:keys
+        kv:size
+        kv:clear)
+
+; v1 store = alist of (key . val) pairs; keys are strings.
+
+(define kv:version 1)
+
+(define (kv:open)
+  (quote ()))
+
+(define (kv:set store key val)
+  (if (not (string? key))
+    store
+    (let loop ((xs store) (out (quote ())) (found #f))
+      (if (null? xs)
+        (if found
+          out
+          (cons (cons key val) out))
+        (let ((p (car xs)))
+          (if (and (pair? p) (equal? (car p) key))
+            (loop (cdr xs) (cons (cons key val) out) #t)
+            (loop (cdr xs) (cons p out) found)))))))
+
+(define (kv:get store key)
+  (if (not (string? key))
+    #f
+    (let loop ((xs store))
+      (if (null? xs)
+        #f
+        (let ((p (car xs)))
+          (if (and (pair? p) (equal? (car p) key))
+            (cdr p)
+            (loop (cdr xs))))))))
+
+(define (kv:del store key)
+  (if (not (string? key))
+    store
+    (let loop ((xs store) (out (quote ())))
+      (if (null? xs)
+        (reverse out)
+        (let ((p (car xs)))
+          (if (and (pair? p) (equal? (car p) key))
+            (loop (cdr xs) out)
+            (loop (cdr xs) (cons p out))))))))
+
+(define (kv:has? store key)
+  (if (not (string? key))
+    #f
+    (let loop ((xs store))
+      (if (null? xs)
+        #f
+        (let ((p (car xs)))
+          (if (and (pair? p) (equal? (car p) key))
+            #t
+            (loop (cdr xs))))))))
+
+(define (kv:keys store)
+  (let loop ((xs store) (out (quote ())))
+    (if (null? xs)
+      (reverse out)
+      (let ((p (car xs)))
+        (if (pair? p)
+          (loop (cdr xs) (cons (car p) out))
+          (loop (cdr xs) out))))))
+
+(define (kv:size store)
+  (let loop ((xs store) (n 0))
+    (if (null? xs)
+      n
+      (loop (cdr xs) (+ n 1)))))
+
+(define (kv:clear store)
+  (quote ())))

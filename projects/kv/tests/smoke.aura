@@ -1,0 +1,77 @@
+; projects/kv/tests/smoke.aura — project acceptance suite
+; Avoid sequential define-after-mutate (host residual). Prefer let* chains.
+;
+;   AURA_PATH=projects/kv/lib:... ./scripts/run-aura.sh projects/kv/tests/smoke.aura
+
+(require "kv" all:)
+
+(define pass 0)
+(define total 0)
+
+(define (t name ok)
+  (set! total (+ total 1))
+  (if ok
+    (begin (set! pass (+ pass 1)) (display "  PASS ") (display name) (newline))
+    (begin (display "  FAIL ") (display name) (newline))))
+
+(display "=== kv smoke kv:version=")
+(display kv:version)
+(newline)
+
+(let* ((s0 (kv:open))
+       (s1 (kv:set s0 "a" 1))
+       (g1 (kv:get s1 "a"))
+       (miss (kv:get s1 "nope"))
+       (s2 (kv:set s1 "a" 9))
+       (g2 (kv:get s2 "a"))
+       (h1 (kv:has? s2 "a"))
+       (h0 (kv:has? s2 "z"))
+       (s3 (kv:del s2 "a"))
+       (g3 (kv:get s3 "a"))
+       (h3 (kv:has? s3 "a"))
+       (s4 (kv:set (kv:set (kv:open) "x" 10) "y" 20))
+       (gx (kv:get s4 "x"))
+       (gy (kv:get s4 "y"))
+       (sz (kv:size s4))
+       (ks (kv:keys s4))
+       (s5 (kv:clear s4))
+       (a (kv:open))
+       (b (kv:set a "k" 1))
+       (c (kv:set (kv:open) "s" "hello")))
+  (t "T1-open" (null? s0))
+  (t "T2-set-get" (equal? g1 1))
+  (t "T3-missing" (eq? miss #f))
+  (t "T4-overwrite" (equal? g2 9))
+  (t "T5-has" (and h1 (not h0)))
+  (t "T6-del" (and (eq? g3 #f) (not h3)))
+  (t "T7-multi" (and (equal? gx 10) (equal? gy 20)))
+  (t "T8-size" (= sz 2))
+  (t "T9-keys"
+     (and (pair? ks)
+          (or (equal? (car ks) "x") (equal? (car ks) "y")
+              (and (pair? (cdr ks))
+                   (or (equal? (car (cdr ks)) "x")
+                       (equal? (car (cdr ks)) "y"))))))
+  (t "T10-clear" (and (null? s5) (= (kv:size s5) 0) (eq? (kv:get s5 "x") #f)))
+  (t "T11-isolation" (and (eq? (kv:get a "k") #f) (equal? (kv:get b "k") 1)))
+  (t "T12-string-val" (equal? (kv:get c "s") "hello")))
+
+(display "SCORE ")
+(display pass)
+(display "/")
+(display total)
+(newline)
+
+(if (and (= pass total) (> total 0))
+  (begin
+    (display "RESULT pass project=kv score=")
+    (display pass)
+    (display " total=")
+    (display total)
+    (newline))
+  (begin
+    (display "RESULT fail project=kv score=")
+    (display pass)
+    (display " total=")
+    (display total)
+    (newline)))
