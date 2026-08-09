@@ -38,6 +38,11 @@ export_env() {
   export UNIFY_LLM_TIMEOUT="${UNIFY_LLM_TIMEOUT:-480}"
   export UNIFY_LLM_RETRIES="${UNIFY_LLM_RETRIES:-3}"
   export UNIFY_LLM_SRC_CHARS="${UNIFY_LLM_SRC_CHARS:-24000}"
+  export UNIFY_FIBER_STRESS="${UNIFY_FIBER_STRESS:-1}"
+  export UNIFY_FIBER_N="${UNIFY_FIBER_N:-32}"
+  export UNIFY_FIBER_KEYS="${UNIFY_FIBER_KEYS:-128}"
+  export UNIFY_FIBER_WAVES="${UNIFY_FIBER_WAVES:-4}"
+  export UNIFY_FIBER_BATCH="${UNIFY_FIBER_BATCH:-16}"
   export UNIFY_DURABLE_EVOLVE="${UNIFY_DURABLE_EVOLVE:-0}"
   export UNIFY_GIT_COMMIT="${UNIFY_GIT_COMMIT:-1}"
   export UNIFY_GIT_PUSH="${UNIFY_GIT_PUSH:-1}"
@@ -90,6 +95,7 @@ start_loop() {
   fi
   start_watchdog
   echo "  project: $UNIFY_PROJECT (state in workspace; survives restart)"
+  echo "  fiber:   N=${UNIFY_FIBER_N} keys=${UNIFY_FIBER_KEYS} waves=${UNIFY_FIBER_WAVES:-4} batch=${UNIFY_FIBER_BATCH:-16} stress=${UNIFY_FIBER_STRESS}"
   echo "  LLM: 1 call/gen timeout=${UNIFY_LLM_TIMEOUT}s x${UNIFY_LLM_RETRIES}"
   echo "  status:  $0 status"
   echo "  stop:    $0 stop"

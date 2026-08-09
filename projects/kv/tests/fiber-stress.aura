@@ -1,0 +1,250 @@
+; projects/kv/tests/fiber-stress.aura — high-concurrency fiber pressure on KV
+;
+; Host residuals baked into this design:
+;   1. Nested fiber:spawn + fiber:join *inside a worker* deadlocks on backend=2.
+;   2. fiber:join may wipe top-level define — keep helpers in one let*.
+;   3. set! on free vars from nested lambdas is unbound — workers pure;
+;      counters only set! in outer let body / while, never inside helper lambdas.
+;   4. backend=2 = real threads; batch fanout caps live concurrency.
+;
+; Axes (flat fanout from main only):
+;   F0 smoke | F1 readers | F2 builders | F3 multi-wave | F4 mixed | F5 burst
+;
+; Env: UNIFY_FIBER_N UNIFY_FIBER_KEYS UNIFY_FIBER_WAVES UNIFY_FIBER_BATCH
+
+(require "kv" all:)
+
+(let* ((env-n (getenv "UNIFY_FIBER_N"))
+       (env-k (getenv "UNIFY_FIBER_KEYS"))
+       (env-w (getenv "UNIFY_FIBER_WAVES"))
+       (env-b (getenv "UNIFY_FIBER_BATCH"))
+       (N-workers
+         (let ((n (if (and (string? env-n) (> (string-length env-n) 0))
+                    (string->number env-n) #f)))
+           (if (and (number? n) (> n 0)) n 32)))
+       (N-keys
+         (let ((n (if (and (string? env-k) (> (string-length env-k) 0))
+                    (string->number env-k) #f)))
+           (if (and (number? n) (> n 0)) n 128)))
+       (N-waves
+         (let ((n (if (and (string? env-w) (> (string-length env-w) 0))
+                    (string->number env-w) #f)))
+           (if (and (number? n) (> n 0)) n 4)))
+       (N-batch
+         (let ((n (if (and (string? env-b) (> (string-length env-b) 0))
+                    (string->number env-b) #f)))
+           (if (and (number? n) (>= n 0)) n 16)))
+       (backend (try (fiber:spawn-backend) (catch (e) -1)))
+
+       ; Pure helpers — no free-var set!
+       (build-store
+         (lambda (n)
+           (let loop ((i 0) (s (kv:open)))
+             (if (>= i n)
+               s
+               (loop (+ i 1)
+                     (kv:set s (string-append "k" (number->string i)) i))))))
+
+       (want-sum (lambda (n) (/ (* n (- n 1)) 2)))
+
+       (sum-gets
+         (lambda (s n)
+           (let loop ((i 0) (acc 0))
+             (if (>= i n)
+               acc
+               (let ((v (kv:get s (string-append "k" (number->string i)))))
+                 (loop (+ i 1) (+ acc (if (number? v) v 0))))))))
+
+       ; Pure: spawn n, join all. → (ok? n-ok results-or-#f spawns joins)
+       (fanout-once
+         (lambda (n thunk)
+           (let spawn-loop ((k 0) (ids (quote ())) (sp 0))
+             (if (>= k n)
+               (let join-loop ((xs ids) (rs (quote ())) (ok #t) (n-ok 0) (jn 0))
+                 (if (null? xs)
+                   (list ok n-ok (if ok rs #f) sp jn)
+                   (let ((r (fiber:join (car xs))))
+                     (join-loop (cdr xs)
+                                (cons r rs)
+                                (and ok (number? r))
+                                (+ n-ok (if (number? r) 1 0))
+                                (+ jn 1)))))
+               (let ((fid (fiber:spawn thunk)))
+                 (if (and (number? fid) (> fid 0))
+                   (spawn-loop (+ k 1) (cons fid ids) (+ sp 1))
+                   (list #f 0 #f sp 0)))))))
+
+       ; Batch to cap live threads when backend=2
+       (fanout-join
+         (lambda (n thunk)
+           (if (or (<= N-batch 0) (<= n N-batch))
+             (fanout-once n thunk)
+             (let batch-loop ((left n) (ok #t) (n-ok 0) (rs (quote ())) (sp 0) (jn 0))
+               (if (<= left 0)
+                 (list ok n-ok (if ok rs #f) sp jn)
+                 (let* ((take (if (< left N-batch) left N-batch))
+                        (r (fanout-once take thunk)))
+                   (if (not (car r))
+                     (list #f n-ok #f (+ sp (list-ref r 3)) jn)
+                     (batch-loop (- left take)
+                                 (and ok (car r))
+                                 (+ n-ok (cadr r))
+                                 (append (caddr r) rs)
+                                 (+ sp (list-ref r 3))
+                                 (+ jn (list-ref r 4))))))))))
+
+       (all-eq
+         (lambda (xs want)
+           (if (not (pair? xs))
+             #f
+             (let loop ((ys xs) (ok #t))
+               (if (or (not ok) (null? ys))
+                 ok
+                 (loop (cdr ys)
+                       (and (number? (car ys)) (= (car ys) want))))))))
+
+       (shared (build-store N-keys))
+       (want (want-sum N-keys))
+       (N-burst (* N-workers 2))
+       (pass 0)
+       (total 0)
+       (spawn-count 0)
+       (join-count 0))
+
+  (display "=== kv fiber-stress workers=")
+  (display N-workers)
+  (display " keys=")
+  (display N-keys)
+  (display " waves=")
+  (display N-waves)
+  (display " batch=")
+  (display N-batch)
+  (display " backend=")
+  (display backend)
+  (newline)
+
+  ; score helper as macros via begin — set! only in this outer body
+  ; ── F0 smoke ────────────────────────────────────────────────────────────
+  (let* ((fid0 (fiber:spawn (lambda () 42)))
+         (j0 (if (and (number? fid0) (> fid0 0)) (fiber:join fid0) #f))
+         (ok0 (and (number? fid0) (> fid0 0) (equal? j0 42))))
+    (set! total (+ total 1))
+    (set! spawn-count (+ spawn-count 1))
+    (if (and (number? fid0) (> fid0 0)) (set! join-count (+ join-count 1)) #f)
+    (if ok0
+      (begin (set! pass (+ pass 1)) (display "  PASS F0-spawn-join") (newline))
+      (begin (display "  FAIL F0-spawn-join") (newline))))
+
+  ; ── F1 concurrent readers ───────────────────────────────────────────────
+  (let* ((reader-job (lambda () (sum-gets shared N-keys)))
+         (r1 (fanout-join N-workers reader-job))
+         (rs1 (caddr r1))
+         (ok1 (and (car r1) (all-eq rs1 want))))
+    (set! spawn-count (+ spawn-count (list-ref r1 3)))
+    (set! join-count (+ join-count (list-ref r1 4)))
+    (display "F1 n-ok=") (display (cadr r1)) (display "/") (display N-workers)
+    (display " sample=") (write (if (pair? rs1) (car rs1) #f))
+    (display " want=") (display want) (newline)
+    (set! total (+ total 1))
+    (if ok1
+      (begin (set! pass (+ pass 1)) (display "  PASS F1-fanout-readers") (newline))
+      (begin (display "  FAIL F1-fanout-readers") (newline))))
+
+  ; ── F2 concurrent builders ──────────────────────────────────────────────
+  (let* ((builder-job (lambda () (kv:size (build-store N-keys))))
+         (r2 (fanout-join N-workers builder-job))
+         (rs2 (caddr r2))
+         (ok2 (and (car r2) (all-eq rs2 N-keys))))
+    (set! spawn-count (+ spawn-count (list-ref r2 3)))
+    (set! join-count (+ join-count (list-ref r2 4)))
+    (display "F2 n-ok=") (display (cadr r2)) (display "/") (display N-workers)
+    (newline)
+    (set! total (+ total 1))
+    (if ok2
+      (begin (set! pass (+ pass 1)) (display "  PASS F2-fanout-builders") (newline))
+      (begin (display "  FAIL F2-fanout-builders") (newline))))
+
+  ; ── F3 multi-wave sustained pressure ────────────────────────────────────
+  (let ((wave-ok #t)
+        (wave-i 0)
+        (reader-job (lambda () (sum-gets shared N-keys))))
+    (while (lambda () (< wave-i N-waves))
+      (lambda ()
+        (let ((rw (fanout-join N-workers reader-job)))
+          (set! spawn-count (+ spawn-count (list-ref rw 3)))
+          (set! join-count (+ join-count (list-ref rw 4)))
+          (display "F3 wave ") (display wave-i)
+          (display " n-ok=") (display (cadr rw))
+          (display "/") (display N-workers) (newline)
+          (if (not (and (car rw) (all-eq (caddr rw) want)))
+            (set! wave-ok #f)
+            #f)
+          (set! wave-i (+ wave-i 1)))))
+    (set! total (+ total 1))
+    (if wave-ok
+      (begin (set! pass (+ pass 1)) (display "  PASS F3-multi-wave") (newline))
+      (begin (display "  FAIL F3-multi-wave") (newline))))
+
+  ; ── F4 mixed ops ────────────────────────────────────────────────────────
+  (let* ((mixed-job
+           (lambda ()
+             (let loop ((i 0) (ok 1))
+               (if (>= i N-keys)
+                 ok
+                 (let ((k (string-append "k" (number->string i))))
+                   (if (and (kv:has? shared k)
+                            (equal? (kv:get shared k) i)
+                            (>= (kv:size shared) N-keys))
+                     (loop (+ i 1) ok)
+                     (loop (+ i 1) 0)))))))
+         (r4 (fanout-join N-workers mixed-job))
+         (rs4 (caddr r4))
+         (ok4 (and (car r4) (all-eq rs4 1))))
+    (set! spawn-count (+ spawn-count (list-ref r4 3)))
+    (set! join-count (+ join-count (list-ref r4 4)))
+    (display "F4 n-ok=") (display (cadr r4)) (display "/") (display N-workers)
+    (newline)
+    (set! total (+ total 1))
+    (if ok4
+      (begin (set! pass (+ pass 1)) (display "  PASS F4-mixed-ops-fanout") (newline))
+      (begin (display "  FAIL F4-mixed-ops-fanout") (newline))))
+
+  ; ── F5 burst spawn rate ─────────────────────────────────────────────────
+  (let* ((burst-job (lambda () (+ 1 2 3 4 5)))
+         (r5 (fanout-join N-burst burst-job))
+         (rs5 (caddr r5))
+         (ok5 (and (car r5) (all-eq rs5 15))))
+    (set! spawn-count (+ spawn-count (list-ref r5 3)))
+    (set! join-count (+ join-count (list-ref r5 4)))
+    (display "F5 n-ok=") (display (cadr r5)) (display "/") (display N-burst)
+    (newline)
+    (set! total (+ total 1))
+    (if ok5
+      (begin (set! pass (+ pass 1)) (display "  PASS F5-burst-spawn") (newline))
+      (begin (display "  FAIL F5-burst-spawn") (newline))))
+
+  ; ── summary ─────────────────────────────────────────────────────────────
+  (display "METRICS spawns=") (display spawn-count)
+  (display " joins=") (display join-count)
+  (display " intensity≈")
+  (display (+ 1 (* N-workers (+ 3 N-waves)) N-burst))
+  (display " fiber-ops")
+  (newline)
+
+  (display "SCORE ") (display pass) (display "/") (display total) (newline)
+
+  (if (and (= pass total) (> total 0))
+    (begin
+      (display "RESULT pass project=kv-fiber score=")
+      (display pass) (display " total=") (display total)
+      (display " workers=") (display N-workers)
+      (display " keys=") (display N-keys)
+      (display " waves=") (display N-waves)
+      (display " batch=") (display N-batch)
+      (display " spawns=") (display spawn-count)
+      (newline))
+    (begin
+      (display "RESULT fail project=kv-fiber score=")
+      (display pass) (display " total=") (display total)
+      (display " spawns=") (display spawn-count)
+      (newline))))

@@ -31,7 +31,10 @@ required=(
   scripts/evolve-watchdog.sh
   scripts/durable-evolve.sh
   scripts/project-evolve.sh
+  scripts/fiber-stress.sh
   scripts/llm_controller.py
+  projects/kv/tests/fiber-stress.aura
+)
 )
   lib/unify-mutate.aura
   lib/unify-explore.aura

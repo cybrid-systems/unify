@@ -18,6 +18,11 @@
 #   UNIFY_SELF_EVOLVE     1 = MiniMax proposal for unify-self bugs (default 0)
 #   UNIFY_PROJECT_EVOLVE  1 = project-level evolve (default 1) e.g. projects/kv
 #   UNIFY_PROJECT         path (default projects/kv)
+#   UNIFY_FIBER_STRESS    1 = fiber high-concurrency pressure each cycle (default 1)
+#   UNIFY_FIBER_N         fiber fanout width (default 32)
+#   UNIFY_FIBER_KEYS      keys per worker store (default 128)
+#   UNIFY_FIBER_WAVES     sustained multi-wave fanout rounds (default 4)
+#   UNIFY_FIBER_BATCH     live concurrent thread cap per fanout (default 16; 0=unlimited)
 #   UNIFY_DURABLE_EVOLVE  1 = also run function-axis explore (default 0)
 #   UNIFY_GIT_COMMIT      1 = commit on success (default 1)
 #   UNIFY_GIT_PUSH         1 = git push after commit (default 1)
@@ -55,6 +60,11 @@ export UNIFY_GIT_PUSH="${UNIFY_GIT_PUSH:-1}"
 export UNIFY_LLM_TIMEOUT="${UNIFY_LLM_TIMEOUT:-480}"
 export UNIFY_LLM_RETRIES="${UNIFY_LLM_RETRIES:-3}"
 export UNIFY_LLM_SRC_CHARS="${UNIFY_LLM_SRC_CHARS:-24000}"
+export UNIFY_FIBER_STRESS="${UNIFY_FIBER_STRESS:-1}"
+export UNIFY_FIBER_N="${UNIFY_FIBER_N:-32}"
+export UNIFY_FIBER_KEYS="${UNIFY_FIBER_KEYS:-128}"
+export UNIFY_FIBER_WAVES="${UNIFY_FIBER_WAVES:-4}"
+export UNIFY_FIBER_BATCH="${UNIFY_FIBER_BATCH:-16}"
 
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 RUN_DIR="$LOG_ROOT/$RUN_ID"
@@ -269,6 +279,20 @@ while true; do
     c_ok=$((c_ok + 1))
   else
     c_fail=$((c_fail + 1))
+  fi
+
+  # High-concurrency fiber pressure (Aura fiber:spawn denseness + KV)
+  if [[ "${UNIFY_FIBER_STRESS}" == "1" ]]; then
+    if run_step "fiber-stress" \
+      "./scripts/fiber-stress.sh" \
+      "RESULT pass fiber-stress" \
+      "$cdir/fiber-stress.log"; then
+      c_ok=$((c_ok + 1))
+    else
+      c_fail=$((c_fail + 1))
+    fi
+  else
+    log "skip fiber-stress (UNIFY_FIBER_STRESS=0)"
   fi
 
   # Project-level evolve (e.g. KV store under SPEC + tests)
