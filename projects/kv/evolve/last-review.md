@@ -1,25 +1,22 @@
 # Controller REVIEW
 
-- **Strengths**
-  - All 35/35 tests green across Phases 0–6 of the in-file roadmap. Alist-of-cons representation is robust (defensive skipping of non-pair cells), insertion order is preserved everywhere, and every op is pure / functional.
-  - Export-before-define discipline maintained; API names stable; no FS / no network / no host escape used.
-  - Last patch fixed the `kv:pick` ordering bug correctly (now walks the *store*, not the requested-keys list). Doc comment matches behavior.
-  - Internal `kv:_mem` helper is in place and used cleanly by `kv:pick`.
-- **Failures / Risks**
-  - None active; SCORE is full. Plateau risk: further naive patches can only regress.
-  - `#f`-as-stored-value vs `#f`-as-miss is a documented limitation that `kv:get-or` must respect (use `kv:_has`, not `kv:_ref`'s return value).
-  - Real "host escape" / FS path is still completely absent; the codebase is denseness-clean.
-- **Denseness / Host risks**
-  - Zero host dependencies; everything derived from a small set of internal primitives (`_ref`, `_has`, `_set`, `_del`, `_fold`, `_map`, `_mem`). Excellent substrate for further extension.
+- All 46/46 tests are green; Phases 0–7 of the in-file roadmap (open/set/get → equal?) are locked in.
+- Pure Aura throughout, alist-of-cons representation with defensive skipping of non-pair cells; insertion order preserved by every op; no FS / no network / no host escape.
+- Export-before-define discipline intact; API names stable since v1; `kv:equal?` correctly distinguishes `#f` values from misses; `kv:pick` walks the *store* (insertion-order by construction); `kv:rename` is a true no-op on collision.
+- Failure / risk: nothing failing — but the project has now consumed every phase enumerated in the in-file roadmap (0..7). SPEC's explicit roadmap only goes to Phase 4 (batch helpers), so the controller is well past it. The next move is **advance SPEC further** by adding a coherent new capability that is still pure Aura, still derived from existing internals, and still keeps T1–T34b green.
 
 # DIRECTION
 
-- **Target phase: Phase 7 — convenience / comparison helpers.** Same denseness posture (pure Aura, derived from existing internals), keeps all T1–T29 green, advances SPEC beyond its current implicit ceiling (Phase 4). No FS escapes, no API renames, no internals touched.
-- **Ops to add** (5 new, all pure, all derive from existing primitives; export-before-define preserved):
-  - `kv:get-or`  — `(store key default)`; uses `kv:_has` so a stored `#f` is distinguishable from a miss.
-  - `kv:rename`  — `(store old-key new-key)`; replaces the old key in place to preserve insertion position; no-op when `old-key` is absent or `new-key` is already present.
-  - `kv:diff`    — `(a b)` → `(added removed changed)` as three sub-stores; `changed` stores `(k . (old . new))` pairs; preserves `a`'s iteration order.
-  - `kv:partition` — `(store proc)` → `(match . nomatch)` pair of stores; preserves order.
-  - `kv:equal?`  — `(a b)` deep structural equality, ignoring insertion order; size-checked first.
-- **Bump** `kv:version` to `6`. **Extend** `tests/smoke.aura` with **T30–T34b** (8 new tests). Total target: **43/43**.
-- **Do NOT touch**: any Phase 0–6 op, internal alist primitives, export order of existing names, or `kv:_mem`.
+- **Target phase: Phase 8 — positional / conditional / inversion helpers.** Same denseness posture (pure Aura, derived from existing `_fold`/`_set`/`_has` primitives), keeps T1–T34b green, advances SPEC beyond Phase 7.
+- **Ops to add (8 new, all pure, all derive from existing primitives; export-before-define preserved; no FS escapes):**
+  - `kv:first`    — first `(k . v)`, `#f` on empty
+  - `kv:last`     — last `(k . v)`, `#f` on empty
+  - `kv:rest`     — store minus first entry; `()` on empty
+  - `kv:butlast`  — store minus last entry; `()` on empty
+  - `kv:take`     — first `n` entries; `n>=size` → whole store
+  - `kv:drop`     — drop first `n` entries; `n>=size` → empty
+  - `kv:invert`   — swap keys/values; first-wins on value collision
+  - `kv:set-if-absent` — only sets when key missing
+- Bump `kv:version` 6 → 7.
+- **What NOT to touch**: existing primitives, existing tests, the kv:_set/kv:_has string-key discipline on `kv:set` (keep `kv:set-if-absent` consistent). No FS / no host escape. No API renames.
+- Extend `tests/smoke.aura` with **T35–T42** (11 new assertions covering first/last/rest/butlast edge cases, take/drop boundaries, invert order + collision + empty, set-if-absent hit + miss).

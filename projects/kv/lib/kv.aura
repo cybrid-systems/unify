@@ -8,6 +8,9 @@
 ;             (reduce, any?, every?, pick, omit, map-values).
 ; Phase 7:   convenience / comparison helpers
 ;             (get-or, rename, diff, partition, equal?).
+; Phase 8:   positional / conditional / inversion helpers
+;             (first, last, rest, butlast, take, drop, invert,
+;             set-if-absent).
 ;
 ; Store representation: alist of (key . val) pairs.
 ;   * Keys are strings.
@@ -48,9 +51,17 @@
         kv:rename
         kv:diff
         kv:partition
-        kv:equal?)
+        kv:equal?
+        kv:first
+        kv:last
+        kv:rest
+        kv:butlast
+        kv:take
+        kv:drop
+        kv:invert
+        kv:set-if-absent)
 
-(define kv:version 6)
+(define kv:version 7)
 
 ; ---------------------------------------------------------------------------
 ; Internal alist primitives.
@@ -416,3 +427,134 @@
               #f)
             #f))))
     #f))
+
+; ---------------------------------------------------------------------------
+; Phase 8 positional / conditional / inversion helpers.
+; Pure functional; insertion order preserved by construction; no FS
+; escapes. All derive from the existing alist primitives.
+;
+; Conventions:
+;   * "First" / "Rest" are O(1) on the head of the alist; "Last" /
+;     "Butlast" are O(n) walks (consistent with standard Scheme idioms).
+;   * "Take(n)" / "Drop(n)" walk the store left-to-right, counting only
+;     pair cells toward `n` — stray non-pair cells are preserved in the
+;     output of `drop` and skipped by `take`, so a defensive artifact
+;     cannot shift the result by one.
+;   * `kv:invert` resolves value collisions in favor of the first
+;     occurrence observed while folding the source, mirroring the
+;     "insertion-order wins" semantics used by every other op.
+; ---------------------------------------------------------------------------
+
+; (kv:_take xs n out) -> reversed list of the first n pairs of xs.
+; Non-pair cells are skipped entirely (defensive: they never count
+; toward `n`). When n<=0 or xs is exhausted, returns (reverse out).
+(define (kv:_take xs n out)
+  (if (= n 0)
+    (reverse out)
+    (if (null? xs)
+      (reverse out)
+      (let ((p (car xs)))
+        (if (pair? p)
+          (kv:_take (cdr xs) (- n 1) (cons p out))
+          (kv:_take (cdr xs) n out))))))
+
+; (kv:_drop xs n) -> store with the first n pairs of xs removed.
+; Non-pair cells are preserved in the output but never counted toward
+; `n`, so a defensive stray cell cannot shift the result by one.
+(define (kv:_drop xs n)
+  (if (null? xs)
+    (quote ())
+    (if (= n 0)
+      xs
+      (let ((p (car xs)))
+        (if (pair? p)
+          (kv:_drop (cdr xs) (- n 1))
+          (cons p (kv:_drop (cdr xs) n)))))))
+
+; (kv:first store) -> (k . v) | #f.
+; Returns the first pair in insertion order, skipping any stray
+; non-pair cells. Returns #f when the store is empty (or contains
+; only non-pair defensive artifacts). O(1) on the head.
+(define (kv:first store)
+  (if (null? store)
+    #f
+    (let ((p (car store)))
+      (if (pair? p) p (kv:first (cdr store))))))
+
+; (kv:last store) -> (k . v) | #f.
+; Returns the last pair in insertion order, skipping any stray non-pair
+; cells. Returns #f when the store is empty. O(n) left-to-right walk.
+(define (kv:last store)
+  (if (null? store)
+    #f
+    (let loop ((xs store) (acc #f))
+      (if (null? xs)
+        acc
+        (let ((p (car xs)))
+          (if (pair? p)
+            (loop (cdr xs) p)
+            (loop (cdr xs) acc)))))))
+
+; (kv:rest store) -> store.
+; Returns the store minus its first pair, skipping any stray non-pair
+; cells. An empty store (or a store of only non-pair cells) returns ().
+(define (kv:rest store)
+  (if (null? store)
+    (quote ())
+    (let ((p (car store)))
+      (if (pair? p)
+        (cdr store)
+        (kv:rest (cdr store))))))
+
+; (kv:butlast store) -> store.
+; Returns the store without its last pair, preserving insertion order.
+; An empty store returns (); a single-pair store also returns ().
+; Non-pair cells are preserved. O(n) via reverse / cdr / reverse.
+(define (kv:butlast store)
+  (if (null? store)
+    (quote ())
+    (reverse (cdr (reverse store)))))
+
+; (kv:take store n) -> store.
+; First n entries of `store`, preserving insertion order. When n<=0
+; the result is empty; when n is greater than the number of pairs in
+; `store` the whole store is returned. Non-pair cells are skipped.
+(define (kv:take store n)
+  (kv:_take store n (quote ())))
+
+; (kv:drop store n) -> store.
+; `store` without its first n entries, preserving insertion order.
+; When n<=0 the result is the whole store; when n is greater than the
+; number of pairs in `store` the result is empty. Non-pair cells are
+; preserved.
+(define (kv:drop store n)
+  (kv:_drop store n))
+
+; (kv:invert store) -> store.
+; Swap keys and values. Folds `store` in insertion order, adding
+; (v -> k) only when v is not already a key in the accumulator; this
+; guarantees that on value collisions the earlier entry wins and the
+; result's insertion order tracks the source. Uses kv:_set directly
+; (bypassing the public string?-key check) because the new keys are
+; the source's values, which may not be strings — inversion is a
+; projection over the existing entry set, not a fresh write.
+(define (kv:invert store)
+  (kv:_fold store (quote ())
+    (lambda (k v acc)
+      (if (kv:_has acc v)
+        acc
+        (kv:_set acc v k)))))
+
+; (kv:set-if-absent store key val) -> store.
+; Sets `key` -> `val` only when `key` is not already present. When
+; `key` exists the original store is returned unchanged (referential
+; identity is preserved for callers that compare stores with eq?;
+; though the public equality predicate is kv:equal?). Validates that
+; `key` is a string, matching the public kv:set guard so that bad
+; callers can't accidentally leak non-string keys into a store.
+(define (kv:set-if-absent store key val)
+  (if (string? key)
+    (if (kv:_has store key)
+      store
+      (kv:_set store key val))
+    store))

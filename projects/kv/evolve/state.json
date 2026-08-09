@@ -1,8 +1,8 @@
 {
   "project": "projects/kv",
-  "generation": 7,
-  "best_score": 46,
-  "best_total": 46,
+  "generation": 8,
+  "best_score": 57,
+  "best_total": 57,
   "status": "ok",
   "history": [
     {
@@ -72,9 +72,20 @@
       "candidate": "46/46",
       "review": "- **Strengths**\n  - All 35/35 tests green across Phases 0\u20136 of the in-file roadmap. Alist-of-cons representation is robust (defensive skipping of non-pair cells), insertion order is preserved everywhere, and every op is pure / functional.\n  - Export-before-define discipline maintained; API names stable; no FS / no network / no host escape used.\n  - Last patch fixed the `kv:pick` ordering bug correctly (now walks the *store*, not the requested-keys list). Doc comment matches behavior.\n  - Interna",
       "direction": "- **Target phase: Phase 7 \u2014 convenience / comparison helpers.** Same denseness posture (pure Aura, derived from existing internals), keeps all T1\u2013T29 green, advances SPEC beyond its current implicit ceiling (Phase 4). No FS escapes, no API renames, no internals touched.\n- **Ops to add** (5 new, all pure, all derive from existing primitives; export-before-define preserved):\n  - `kv:get-or`  \u2014 `(store key default)`; uses `kv:_has` so a stored `#f` is distinguishable from a miss.\n  - `kv:rename`  \u2014"
+    },
+    {
+      "ts": "2026-08-09T05:38Z",
+      "phase": "control-loop",
+      "generation": 8,
+      "accepted": true,
+      "reason": "score-improved",
+      "baseline": "46/46",
+      "candidate": "57/57",
+      "review": "- All 46/46 tests are green; Phases 0\u20137 of the in-file roadmap (open/set/get \u2192 equal?) are locked in.\n- Pure Aura throughout, alist-of-cons representation with defensive skipping of non-pair cells; insertion order preserved by every op; no FS / no network / no host escape.\n- Export-before-define discipline intact; API names stable since v1; `kv:equal?` correctly distinguishes `#f` values from misses; `kv:pick` walks the *store* (insertion-order by construction); `kv:rename` is a true no-op on co",
+      "direction": "- **Target phase: Phase 8 \u2014 positional / conditional / inversion helpers.** Same denseness posture (pure Aura, derived from existing `_fold`/`_set`/`_has` primitives), keeps T1\u2013T34b green, advances SPEC beyond Phase 7.\n- **Ops to add (8 new, all pure, all derive from existing primitives; export-before-define preserved; no FS escapes):**\n  - `kv:first`    \u2014 first `(k . v)`, `#f` on empty\n  - `kv:last`     \u2014 last `(k . v)`, `#f` on empty\n  - `kv:rest`     \u2014 store minus first entry; `()` on empty\n "
     }
   ],
-  "updated": "2026-08-09T05:34Z",
-  "last_review": "- **Strengths**\n  - All 35/35 tests green across Phases 0\u20136 of the in-file roadmap. Alist-of-cons representation is robust (defensive skipping of non-pair cells), insertion order is preserved everywhere, and every op is pure / functional.\n  - Export-before-define discipline maintained; API names stable; no FS / no network / no host escape used.\n  - Last patch fixed the `kv:pick` ordering bug correctly (now walks the *store*, not the requested-keys list). Doc comment matches behavior.\n  - Internal `kv:_mem` helper is in place and used cleanly by `kv:pick`.\n- **Failures / Risks**\n  - None active; SCORE is full. Plateau risk: further naive patches can only regress.\n  - `#f`-as-stored-value vs `#f`-as-miss is a documented limitation that `kv:get-or` must respect (use `kv:_has`, not `kv:_ref`'s return value).\n  - Real \"host escape\" / FS path is still completely absent; the codebase is denseness-clean.\n- **Denseness / Host risks**\n  - Zero host dependencies; everything derived from a small set of internal primitives (`_ref`, `_has`, `_set`, `_del`, `_fold`, `_map`, `_mem`). Excellent substrate for further extension.",
-  "last_direction": "- **Target phase: Phase 7 \u2014 convenience / comparison helpers.** Same denseness posture (pure Aura, derived from existing internals), keeps all T1\u2013T29 green, advances SPEC beyond its current implicit ceiling (Phase 4). No FS escapes, no API renames, no internals touched.\n- **Ops to add** (5 new, all pure, all derive from existing primitives; export-before-define preserved):\n  - `kv:get-or`  \u2014 `(store key default)`; uses `kv:_has` so a stored `#f` is distinguishable from a miss.\n  - `kv:rename`  \u2014 `(store old-key new-key)`; replaces the old key in place to preserve insertion position; no-op when `old-key` is absent or `new-key` is already present.\n  - `kv:diff`    \u2014 `(a b)` \u2192 `(added removed changed)` as three sub-stores; `changed` stores `(k . (old . new))` pairs; preserves `a`'s iteration order.\n  - `kv:partition` \u2014 `(store proc)` \u2192 `(match . nomatch)` pair of stores; preserves order.\n  - `kv:equal?`  \u2014 `(a b)` deep structural equality, ignoring insertion order; size-checked first.\n- *"
+  "updated": "2026-08-09T05:38Z",
+  "last_review": "- All 46/46 tests are green; Phases 0\u20137 of the in-file roadmap (open/set/get \u2192 equal?) are locked in.\n- Pure Aura throughout, alist-of-cons representation with defensive skipping of non-pair cells; insertion order preserved by every op; no FS / no network / no host escape.\n- Export-before-define discipline intact; API names stable since v1; `kv:equal?` correctly distinguishes `#f` values from misses; `kv:pick` walks the *store* (insertion-order by construction); `kv:rename` is a true no-op on collision.\n- Failure / risk: nothing failing \u2014 but the project has now consumed every phase enumerated in the in-file roadmap (0..7). SPEC's explicit roadmap only goes to Phase 4 (batch helpers), so the controller is well past it. The next move is **advance SPEC further** by adding a coherent new capability that is still pure Aura, still derived from existing internals, and still keeps T1\u2013T34b green.",
+  "last_direction": "- **Target phase: Phase 8 \u2014 positional / conditional / inversion helpers.** Same denseness posture (pure Aura, derived from existing `_fold`/`_set`/`_has` primitives), keeps T1\u2013T34b green, advances SPEC beyond Phase 7.\n- **Ops to add (8 new, all pure, all derive from existing primitives; export-before-define preserved; no FS escapes):**\n  - `kv:first`    \u2014 first `(k . v)`, `#f` on empty\n  - `kv:last`     \u2014 last `(k . v)`, `#f` on empty\n  - `kv:rest`     \u2014 store minus first entry; `()` on empty\n  - `kv:butlast`  \u2014 store minus last entry; `()` on empty\n  - `kv:take`     \u2014 first `n` entries; `n>=size` \u2192 whole store\n  - `kv:drop`     \u2014 drop first `n` entries; `n>=size` \u2192 empty\n  - `kv:invert`   \u2014 swap keys/values; first-wins on value collision\n  - `kv:set-if-absent` \u2014 only sets when key missing\n- Bump `kv:version` 6 \u2192 7.\n- **What NOT to touch**: existing primitives, existing tests, the kv:_set/kv:_has string-key discipline on `kv:set` (keep `kv:set-if-absent` consistent). No FS / no host e"
 }

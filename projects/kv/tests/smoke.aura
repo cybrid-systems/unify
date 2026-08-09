@@ -356,6 +356,135 @@
    (and (kv:equal? (kv:open) (kv:open))
         (not (kv:equal? (kv:open) (kv:set (kv:open) "a" 1)))))
 
+; ---- Phase 8: positional / conditional / inversion helpers ----
+
+; T35: first() returns the first (k . v); #f on empty.
+(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
+       (f (kv:first s))
+       (e (kv:first (kv:open))))
+  (t "T35-first"
+     (and (pair? f)
+          (equal? (car f) "a")
+          (equal? (cdr f) 1)
+          (eq? e #f))))
+
+; T36: last() returns the last (k . v); #f on empty.
+(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
+       (l (kv:last s))
+       (e (kv:last (kv:open))))
+  (t "T36-last"
+     (and (pair? l)
+          (equal? (car l) "c")
+          (equal? (cdr l) 3)
+          (eq? e #f))))
+
+; T37: rest() returns store minus its first pair; empty stays empty.
+(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
+       (r (kv:rest s))
+       (rk (kv:keys r))
+       (e (kv:rest (kv:open))))
+  (t "T37-rest"
+     (and (= (kv:size r) 2)
+          (eq? (kv:get r "a") #f)
+          (equal? (kv:get r "b") 2)
+          (equal? (kv:get r "c") 3)
+          (equal? (car rk) "b")
+          (equal? (car (cdr rk)) "c")
+          (null? e))))
+
+; T38: butlast() returns store minus its last pair; preserves order.
+(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
+       (b (kv:butlast s))
+       (bk (kv:keys b))
+       (e (kv:butlast (kv:open))))
+  (t "T38-butlast"
+     (and (= (kv:size b) 2)
+          (equal? (kv:get b "a") 1)
+          (equal? (kv:get b "b") 2)
+          (eq? (kv:get b "c") #f)
+          (equal? (car bk) "a")
+          (equal? (car (cdr bk)) "b")
+          (null? e))))
+
+; T38b: butlast() on a single-pair store returns an empty store.
+(t "T38b-butlast-single"
+   (null? (kv:butlast (kv:set (kv:open) "only" 1))))
+
+; T39: take(n) covers n=0, partial, full, and overflow.
+(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
+       (t0 (kv:take s 0))
+       (t1 (kv:take s 1))
+       (t2 (kv:take s 2))
+       (t3 (kv:take s 3))
+       (t9 (kv:take s 9)))
+  (t "T39-take"
+     (and (null? t0)
+          (= (kv:size t0) 0)
+          (= (kv:size t1) 1)
+          (equal? (kv:get t1 "a") 1)
+          (eq? (kv:get t1 "b") #f)
+          (= (kv:size t2) 2)
+          (equal? (kv:get t2 "a") 1)
+          (equal? (kv:get t2 "b") 2)
+          (eq? (kv:get t2 "c") #f)
+          (= (kv:size t3) 3)
+          (= (kv:size t9) 3)
+          (equal? (kv:get t9 "c") 3))))
+
+; T40: drop(n) covers n=0, partial, full, and overflow.
+(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
+       (d0 (kv:drop s 0))
+       (d1 (kv:drop s 1))
+       (d2 (kv:drop s 2))
+       (d3 (kv:drop s 3))
+       (d9 (kv:drop s 9)))
+  (t "T40-drop"
+     (and (= (kv:size d0) 3)
+          (equal? (kv:get d0 "a") 1)
+          (= (kv:size d1) 2)
+          (eq? (kv:get d1 "a") #f)
+          (equal? (kv:get d1 "b") 2)
+          (equal? (kv:get d1 "c") 3)
+          (= (kv:size d2) 1)
+          (eq? (kv:get d2 "b") #f)
+          (equal? (kv:get d2 "c") 3)
+          (null? d3)
+          (null? d9))))
+
+; T41: invert() swaps keys and values, preserving insertion order.
+(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
+       (i (kv:invert s))
+       (ik (kv:keys i)))
+  (t "T41-invert"
+     (and (= (kv:size i) 3)
+          (equal? (kv:get i 1) "a")
+          (equal? (kv:get i 2) "b")
+          (equal? (kv:get i 3) "c")
+          (equal? (car ik) 1)
+          (equal? (car (cdr ik)) 2)
+          (equal? (car (cdr (cdr ik))) 3))))
+
+; T41b: invert() keeps the first occurrence on a value collision.
+(let* ((s (kv:set (kv:set (kv:open) "a" 1) "b" 1))
+       (i (kv:invert s)))
+  (t "T41b-invert-collision"
+     (and (= (kv:size i) 1)
+          (equal? (kv:get i 1) "a"))))
+
+; T41c: invert() on an empty store is empty.
+(t "T41c-invert-empty"
+   (null? (kv:invert (kv:open))))
+
+; T42: set-if-absent() preserves an existing value; only sets on miss.
+(let* ((s (kv:set (kv:open) "x" 1))
+       (s2 (kv:set-if-absent s "x" 999))
+       (s3 (kv:set-if-absent s "y" 2)))
+  (t "T42-set-if-absent"
+     (and (equal? (kv:get s2 "x") 1)
+          (eq? (kv:get s2 "y") #f)
+          (equal? (kv:get s3 "x") 1)
+          (equal? (kv:get s3 "y") 2))))
+
 (display "SCORE ")
 (display pass)
 (display "/")
