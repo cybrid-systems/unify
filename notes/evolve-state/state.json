@@ -1,7 +1,7 @@
 {
   "mode": "spacetime-explore",
-  "generation": 50,
-  "axis_cursor": 2,
+  "generation": 51,
+  "axis_cursor": 3,
   "subjects": {
     "score": {
       "span": "aether",
@@ -624,10 +624,22 @@
       "candidates_n": 4,
       "fitness": 1000,
       "mode": "spacetime-explore"
+    },
+    {
+      "ts": "2026-08-09T15:06Z",
+      "generation": 51,
+      "axis": "leaf",
+      "span": "prometheus",
+      "from_body": "(lambda (x) (* x 1))",
+      "to_body": "(lambda (x) (* x 1))",
+      "tried": 8,
+      "candidates_n": 8,
+      "fitness": 1000,
+      "mode": "spacetime-explore"
     }
   ],
   "status": "ok",
-  "updated": "2026-08-09T14:59Z",
-  "last_axis": "kernel",
-  "last_span": "hephaestus"
+  "updated": "2026-08-09T15:06Z",
+  "last_axis": "leaf",
+  "last_span": "prometheus"
 }
