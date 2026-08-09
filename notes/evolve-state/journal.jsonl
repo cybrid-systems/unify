@@ -25,3 +25,4 @@
 {"ts": "2026-08-09T04:26Z", "from_generation": 24, "to_generation": 25, "factor": 51, "body": "(lambda (x) (* x 51))", "decision": "select", "candidates_tried": 1, "candidates_n": 1, "mode": "multi-sandbox-select"}
 {"ts": "2026-08-09T04:27Z", "from_generation": 25, "to_generation": 26, "factor": 53, "body": "(lambda (x) (* x 53))", "decision": "select", "candidates_tried": 1, "candidates_n": 1, "mode": "multi-sandbox-select"}
 {"ts": "2026-08-09T04:28Z", "from_generation": 26, "to_generation": 27, "factor": 55, "body": "(lambda (x) (* x 55))", "decision": "select", "candidates_tried": 1, "candidates_n": 1, "mode": "multi-sandbox-select"}
+{"ts": "2026-08-09T04:29Z", "from_generation": 27, "to_generation": 28, "factor": 57, "body": "(lambda (x) (* x 57))", "decision": "select", "candidates_tried": 1, "candidates_n": 1, "mode": "multi-sandbox-select"}
