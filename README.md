@@ -34,15 +34,16 @@ No DeepSeek / multi-provider matrix in this repo by policy.
 ```text
 unify/
 ├── examples/
-│   ├── 01-offline-compose/   # no LLM: run one denseness probe per span
-│   └── 02-live-evolve/       # MiniMax-M3 propose → mutate → verify (short N)
-├── lib/                      # thin composition (export-before-require)
+│   ├── 01-offline-compose/   # sibling smokes + in-process four-span compose
+│   ├── 02-live-evolve/       # MiniMax-M3 propose → mutate → verify (short N)
+│   └── 03-git-host-probe/    # Aura git-* (libgit2) + residual classify
+├── lib/                      # measure, loop, host, compose (export-before-require)
 ├── scripts/
 │   ├── run-aura.sh
 │   ├── run-offline.sh
 │   ├── env-minimax.sh
 │   ├── overnight.sh
-│   └── file-aura-issue.sh    # draft by default; UNIFY_AUTO_ISSUE=1 to post
+│   └── file-aura-issue.sh    # ~/.github-token; draft default; UNIFY_AUTO_ISSUE=1
 ├── notes/
 │   ├── denseness-report.md
 │   ├── escape-log.md
@@ -95,7 +96,9 @@ Default is **draft-only** so overnight cannot spam the Aura tracker.
 
 ## Status
 
-**Initialized.** Offline compose + live evolve skeleton. Expand N and dual-span subjects under denseness discipline.
+**Iteration 2.** In-process four-span composition, metered `git-*` host probe, issue
+drafts via `~/.github-token` (curl fallback). Expand overnight N and dual-subject
+synthesis under denseness discipline.
 
 ## License
 

@@ -1,4 +1,4 @@
-; lib/unify-min.aura — facade
+; lib/unify-min.aura — facade (measure + loop + host + compose)
 ; Form order: export before require.
 
 (export unify:stats unify:stats-reset! unify:stats-ref unify:stats-bump!
@@ -9,9 +9,21 @@
         unify:install-subject unify:safety-ok?
         unify:snapshot unify:restore unify:rebind-safe
         unify:observe-score unify:verify-score
-        unify:propose-body! unify:loop-once!)
+        unify:propose-body! unify:loop-once!
+        unify:host-version
+        unify:classify-signal unify:host-flag! unify:fingerprint
+        unify:git-rev unify:git-branch unify:git-status-short
+        unify:git-log-oneline unify:git-diff-text
+        unify:git-probe! unify:git-stage-safe! unify:git-commit-safe!
+        unify:compose-version
+        unify:compose-span-versions
+        unify:compose-aether! unify:compose-hephaestus!
+        unify:compose-prometheus! unify:compose-hermes!
+        unify:compose-all! unify:compose-ok?)
 
 (require "unify-measure" all:)
 (require "unify-loop" all:)
+(require "unify-host" all:)
+(require "unify-compose" all:)
 
-(define unify:min-version 1)
+(define unify:min-version 2)

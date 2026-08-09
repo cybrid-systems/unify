@@ -1,0 +1,75 @@
+; examples/01-offline-compose/main.aura
+;
+; In-process four-span composition (no LLM, no network).
+; Complements scripts/run-offline.sh which also runs each span's own smoke.
+;
+;   ./scripts/run-aura.sh examples/01-offline-compose/main.aura
+
+(require "unify-min" all:)
+
+(unify:stats-reset!)
+
+(display "=== Unify 01-offline-compose: four-span in-process ===")
+(newline)
+(display "unify:min-version=")
+(display unify:min-version)
+(display " compose=")
+(display unify:compose-version)
+(display " host=")
+(display unify:host-version)
+(newline)
+
+(display "span-versions: ")
+(write (unify:compose-span-versions))
+(newline)
+
+(define results (unify:compose-all!))
+(display "compose results:")
+(newline)
+(let loop ((ys results))
+  (if (null? ys)
+    #t
+    (begin
+      (display "  ")
+      (write (car ys))
+      (newline)
+      (loop (cdr ys)))))
+
+(define all-ok (unify:compose-ok? results))
+(display "compose-ok=")
+(display all-ok)
+(newline)
+
+; Metered git read probe (libgit2 prims) — composition-path E
+(define git (unify:git-probe!))
+(display "git-probe: ")
+(write git)
+(newline)
+(define git-ok (unify:alist-ref ":ok" git #f))
+
+(display "stats: ")
+(write (unify:stats-alist))
+(newline)
+
+(let ((pass
+        (and all-ok git-ok
+             (= (unify:stats-ref "compose_fail") 0)
+             (>= (unify:stats-ref "compose_ok") 4)
+             (>= (unify:stats-ref "git_probes") 1))))
+  (if pass
+    (begin
+      (display "PASS: four-span compose + git probe")
+      (newline)
+      (display "RESULT pass example=01-offline-compose in-process escapes=")
+      (display (unify:stats-ref "escapes"))
+      (newline))
+    (begin
+      (display "FAIL: offline compose")
+      (newline)
+      (display "RESULT fail example=01-offline-compose")
+      (newline)
+      (display "  all-ok=")
+      (display all-ok)
+      (display " git-ok=")
+      (display git-ok)
+      (newline))))

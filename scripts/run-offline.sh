@@ -53,18 +53,39 @@ run_span hephaestus "$HEPH"   "examples/01-minimal-kernel/main.aura"
 run_span prometheus "$PROM"   "examples/01-minimal-scale/main.aura"
 run_span hermes    "$HERMES"  "examples/01-minimal-topology/main.aura"
 
-echo "======== unify forced-body evolve ========"
-# Offline path: no UNIFY_LIVE → force-body triple
-unset UNIFY_LIVE LLM_API_KEY || true
-if ./scripts/run-aura.sh examples/02-live-evolve/main.aura 2>&1 | tee /tmp/unify-offline-evolve.log | tail -n 8; then
-  if grep -q 'RESULT pass example=02-live-evolve' /tmp/unify-offline-evolve.log; then
-    pass=$((pass + 1))
+run_unify() {
+  local name="$1"
+  local path="$2"
+  local expect="$3"
+  echo "======== unify $name ========"
+  local log="/tmp/unify-offline-$name.log"
+  if ./scripts/run-aura.sh "$path" >"$log" 2>&1; then
+    if grep -q "$expect" "$log"; then
+      echo "PASS unify=$name"
+      pass=$((pass + 1))
+      tail -n 4 "$log" || true
+    else
+      echo "FAIL unify=$name (no expected RESULT)"
+      tail -n 30 "$log" || true
+      fail=$((fail + 1))
+    fi
   else
+    echo "FAIL unify=$name (runner error)"
+    tail -n 40 "$log" || true
     fail=$((fail + 1))
   fi
-else
-  fail=$((fail + 1))
-fi
+  echo
+}
+
+# Offline path: no UNIFY_LIVE → force-body triple / no LLM
+unset UNIFY_LIVE LLM_API_KEY || true
+
+run_unify "in-process-compose" "examples/01-offline-compose/main.aura" \
+  "RESULT pass example=01-offline-compose"
+run_unify "forced-body-evolve" "examples/02-live-evolve/main.aura" \
+  "RESULT pass example=02-live-evolve"
+run_unify "git-host-probe" "examples/03-git-host-probe/main.aura" \
+  "RESULT pass example=03-git-host-probe"
 
 echo "======== summary ========"
 echo "pass=$pass fail=$fail"
@@ -72,4 +93,4 @@ if [[ "$fail" -ne 0 ]]; then
   echo "RESULT fail example=01-offline-compose"
   exit 1
 fi
-echo "RESULT pass example=01-offline-compose spans=4+unify"
+echo "RESULT pass example=01-offline-compose spans=4+unify-compose+git"

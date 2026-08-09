@@ -21,3 +21,5 @@ continuous self-evolution loop. LLM provider is **fixed: MiniMax-M3**.
 - Compose sibling span libs via `AURA_PATH`; do not fork engines.
 - Live propose must stay schema-gated; refuse garbage LLM output.
 - Offline suite must stay green without network.
+- Prefer Aura `git-*` prims (`unify-host`) over shell git; meter as \(E\).
+- File Aura issues only for class=`host`; use `scripts/file-aura-issue.sh` + `~/.github-token`.

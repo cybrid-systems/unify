@@ -1,0 +1,185 @@
+; lib/unify-host.aura — host residual classification + metered git:* escape (E)
+;
+; Aura exposes libgit2-backed git-* prims (#1970): git-status, git-diff, git-log,
+; git-commit, git-branch-current, git-stage, git-rev-parse.
+; Unify meters them as composition-path escapes and classifies failures before
+; any GitHub write (see scripts/file-aura-issue.sh).
+;
+; Form order: export before require (#2766).
+
+(export unify:host-version
+        unify:classify-signal
+        unify:host-flag!
+        unify:fingerprint
+        unify:git-rev
+        unify:git-branch
+        unify:git-status-short
+        unify:git-log-oneline
+        unify:git-diff-text
+        unify:git-probe!
+        unify:git-stage-safe!
+        unify:git-commit-safe!)
+
+(require "std/string" all:)
+(require "unify-measure" all:)
+
+(define unify:host-version 1)
+
+; Classify log/error text → "host" | "denseness" | "llm" | "unknown"
+; Only "host" may be filed against cybrid-systems/aura.
+(define (unify:classify-signal text)
+  (if (not (string? text))
+    "unknown"
+    (cond
+      ((or (string-contains? text "unbound variable")
+           (string-contains? text "recursion depth exceeded")
+           (string-contains? text "SIGSEGV")
+           (string-contains? text "internal error")
+           (string-contains? text "segmentation")
+           (string-contains? text "eval_flat")
+           (string-contains? text "type error: cannot call")
+           (string-contains? text "pipeline")
+           (string-contains? text "export before require")
+           (string-contains? text "git-commit")
+           (string-contains? text "git-stage")
+           (string-contains? text "capability")
+           (string-contains? text "effect denied"))
+       "host")
+      ((or (string-contains? text "verify-fail")
+           (string-contains? text "rollback")
+           (string-contains? text "denseness")
+           (string-contains? text "leaves-intact")
+           (string-contains? text "escape rate"))
+       "denseness")
+      ((or (string-contains? text "llm-fail")
+           (string-contains? text "no-key")
+           (string-contains? text "rate limit")
+           (string-contains? text "rate-limit")
+           (string-contains? text "MiniMax")
+           (string-contains? text "HTTP")
+           (string-contains? text "timeout")
+           (string-contains? text "ECONN")
+           (string-contains? text "network"))
+       "llm")
+      (else "unknown"))))
+
+(define (unify:host-flag! reason)
+  (unify:stats-bump! "host_flags")
+  (if (string? reason)
+    (unify:stats-set! "last_host_reason" reason)
+    #f)
+  (unify:stats-ref "host_flags"))
+
+; Crude stable fingerprint: length + first non-space char codes (no crypto prim).
+(define (unify:fingerprint text)
+  (if (not (string? text))
+    "empty"
+    (let ((n (string-length text))
+          (acc 0)
+          (i 0)
+          (taken 0))
+      (while (lambda () (and (< i n) (< taken 16)))
+        (lambda ()
+          (let ((c (string-ref text i)))
+            (if (and (number? c) (> c 32))
+              (begin
+                (set! acc (+ (* acc 33) c))
+                (set! taken (+ taken 1)))
+              #f)
+            (set! i (+ i 1)))))
+      (string-append "fp-" (number->string n) "-" (number->string acc)))))
+
+; ── Metered git read prims (E: host FS / libgit2) ──────────────────────────
+
+(define (unify:git-rev)
+  (unify:escape-note! 40)
+  (try
+    (let ((s (git-rev-parse)))
+      (if (string? s) s ""))
+    (catch (e)
+      (unify:host-flag! "git-rev-parse")
+      "")))
+
+(define (unify:git-branch)
+  (unify:escape-note! 41)
+  (try
+    (let ((s (git-branch-current)))
+      (if (string? s) s ""))
+    (catch (e)
+      (unify:host-flag! "git-branch-current")
+      "")))
+
+(define (unify:git-status-short)
+  (unify:escape-note! 42)
+  (try
+    (let ((s (git-status)))
+      (if (string? s) s ""))
+    (catch (e)
+      (unify:host-flag! "git-status")
+      "")))
+
+(define (unify:git-log-oneline n)
+  (unify:escape-note! 43)
+  (try
+    (let ((k (if (and (number? n) (> n 0)) n 5)))
+      (let ((s (git-log k)))
+        (if (string? s) s "")))
+    (catch (e)
+      (unify:host-flag! "git-log")
+      "")))
+
+(define (unify:git-diff-text)
+  (unify:escape-note! 44)
+  (try
+    (let ((s (git-diff)))
+      (if (string? s) s ""))
+    (catch (e)
+      (unify:host-flag! "git-diff")
+      "")))
+
+; Full read-side probe → alist of results + class of any failure.
+(define (unify:git-probe!)
+  (unify:stats-bump! "git_probes")
+  (let* ((rev (unify:git-rev))
+         (br (unify:git-branch))
+         (st (unify:git-status-short))
+         (lg (unify:git-log-oneline 3))
+         (df (unify:git-diff-text))
+         (ok (and (string? rev) (> (string-length rev) 0)
+                  (string? br) (> (string-length br) 0)
+                  (string? lg))))
+    (if (not ok)
+      (unify:host-flag! "git-probe-incomplete")
+      #f)
+    (list (cons ":ok" ok)
+          (cons ":rev" rev)
+          (cons ":branch" br)
+          (cons ":status" st)
+          (cons ":log" lg)
+          (cons ":diff_len" (if (string? df) (string-length df) 0))
+          (cons ":class" (if ok "ok" "host")))))
+
+; Write-side: stage one path (capability-gated on host). Returns exit code or -1.
+; Multi-path: call repeatedly; avoids apply+prim edge cases under sandbox.
+(define (unify:git-stage-safe! path)
+  (unify:escape-note! 45)
+  (if (not (and (string? path) (> (string-length path) 0)))
+    -1
+    (try
+      (let ((rc (git-stage path)))
+        (if (number? rc) rc -1))
+      (catch (e)
+        (unify:host-flag! "git-stage")
+        -1))))
+
+; Write-side: commit with message (exec+network capability on host #2072).
+(define (unify:git-commit-safe! msg)
+  (unify:escape-note! 46)
+  (if (not (and (string? msg) (> (string-length msg) 0)))
+    -1
+    (try
+      (let ((rc (git-commit msg)))
+        (if (number? rc) rc -1))
+      (catch (e)
+        (unify:host-flag! "git-commit")
+        -1))))

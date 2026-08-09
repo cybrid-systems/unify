@@ -1,0 +1,159 @@
+; lib/unify-compose.aura — in-process four-span composition surface
+;
+; Loads Aether + Hephaestus + Prometheus + Hermes facades in one Aura process
+; and runs a micro denseness probe per span. Does not re-prove each span;
+; pressure-tests that one V_A host can bind all four synthesis surfaces.
+;
+; Form order: export before require (#2766).
+
+(export unify:compose-version
+        unify:compose-span-versions
+        unify:compose-aether!
+        unify:compose-hephaestus!
+        unify:compose-prometheus!
+        unify:compose-hermes!
+        unify:compose-all!
+        unify:compose-ok?)
+
+(require "std/string" all:)
+(require "unify-measure" all:)
+(require "aether-min" all:)
+(require "hephaestus-min" all:)
+(require "prometheus-min" all:)
+(require "hermes-min" all:)
+
+(define unify:compose-version 1)
+
+(define (unify:compose-span-versions)
+  (list (cons "aether" aether:min-version)
+        (cons "hephaestus" heph:min-version)
+        (cons "prometheus" prom:min-version)
+        (cons "hermes" hermes:min-version)
+        (cons "unify-compose" unify:compose-version)))
+
+; Aether: install double score, observe sample.
+(define (unify:compose-aether!)
+  (unify:stats-bump! "compose_aether")
+  (aether:stats-reset!)
+  (let ((ok (aether:install-source "(define unify_score (lambda (x) (* x 2)))")))
+    (if (not ok)
+      (begin
+        (unify:stats-bump! "compose_fail")
+        (list (cons ":span" "aether") (cons ":ok" #f) (cons ":reason" "install")))
+      (let ((v (try (unify_score 7) (catch (e) -1))))
+        (if (= v 14)
+          (begin
+            (unify:stats-bump! "compose_ok")
+            (list (cons ":span" "aether")
+                  (cons ":ok" #t)
+                  (cons ":score7" v)
+                  (cons ":version" aether:min-version)))
+          (begin
+            (unify:stats-bump! "compose_fail")
+            (list (cons ":span" "aether")
+                  (cons ":ok" #f)
+                  (cons ":reason" "observe")
+                  (cons ":score7" v))))))))
+
+; Hephaestus: pure kernel closed form sum-sq.
+(define (unify:compose-hephaestus!)
+  (unify:stats-bump! "compose_hephaestus")
+  (heph:stats-reset!)
+  (let* ((n 64)
+         (got (try (heph:sum-sq n) (catch (e) -1)))
+         (want (heph:closed-sum-sq n))
+         (ok (and (number? got) (number? want) (= got want))))
+    (if ok
+      (begin
+        (unify:stats-bump! "compose_ok")
+        (list (cons ":span" "hephaestus")
+              (cons ":ok" #t)
+              (cons ":n" n)
+              (cons ":sum" got)
+              (cons ":version" heph:min-version)))
+      (begin
+        (unify:stats-bump! "compose_fail")
+        (list (cons ":span" "hephaestus")
+              (cons ":ok" #f)
+              (cons ":got" got)
+              (cons ":want" want))))))
+
+; Prometheus: install dual leaves; observe FlatAST metrology from the module.
+; Note: calling freshly set-code top-level names from a *required module* after
+; prior set-code rounds is a known host residual (see notes/host-residuals.md
+; fingerprint set-code-module-bind). Prefer node/def/validate surfaces here.
+(define (unify:compose-prometheus!)
+  (unify:stats-bump! "compose_prometheus")
+  (prom:stats-reset!)
+  (let* ((ok (try (prom:install-source
+                    "(define prom_leaf_a (lambda (x) (+ x 1)))(define prom_leaf_b (lambda (x) (* x 2)))")
+                  (catch (e) #f)))
+         (obs (try (prom:observe-flatast!) (catch (e) #f)))
+         (nodes (try (prom:node-count) (catch (e) -1)))
+         (defs (try (prom:def-count) (catch (e) -1)))
+         (v-nodes (try (prom:validate-nodes-pass?) (catch (e) #f)))
+         (v-own (try (prom:validate-ownership-pass?) (catch (e) #f)))
+         (good (and ok (number? nodes) (>= nodes 1)
+                    (number? defs) (>= defs 2)
+                    v-nodes)))
+    (if good
+      (begin
+        (unify:stats-bump! "compose_ok")
+        (list (cons ":span" "prometheus")
+              (cons ":ok" #t)
+              (cons ":nodes" nodes)
+              (cons ":defs" defs)
+              (cons ":validate_nodes" v-nodes)
+              (cons ":validate_own" v-own)
+              (cons ":version" prom:min-version)))
+      (begin
+        (unify:stats-bump! "compose_fail")
+        (list (cons ":span" "prometheus")
+              (cons ":ok" #f)
+              (cons ":install" ok)
+              (cons ":nodes" nodes)
+              (cons ":defs" defs)
+              (cons ":validate_nodes" v-nodes)
+              (cons ":obs" obs))))))
+
+; Hermes: star topology + short region workload.
+(define (unify:compose-hermes!)
+  (unify:stats-bump! "compose_hermes")
+  (hermes:stats-reset!)
+  (let* ((topo (try (hermes:build-star-topology) (catch (e) #f)))
+         (r (if topo
+              (try (hermes:run-region-workload! topo 4) (catch (e) #f))
+              #f))
+         (delivered (hermes:stats-ref "messages_delivered"))
+         (ok (and topo (pair? r) (>= delivered 4))))
+    (if ok
+      (begin
+        (unify:stats-bump! "compose_ok")
+        (list (cons ":span" "hermes")
+              (cons ":ok" #t)
+              (cons ":delivered" delivered)
+              (cons ":agents" (length (hermes:topo-agents topo)))
+              (cons ":version" hermes:min-version)))
+      (begin
+        (unify:stats-bump! "compose_fail")
+        (list (cons ":span" "hermes")
+              (cons ":ok" #f)
+              (cons ":delivered" delivered)
+              (cons ":result" r))))))
+
+(define (unify:compose-all!)
+  (unify:stats-bump! "compose_runs")
+  (let ((a (unify:compose-aether!))
+        (h (unify:compose-hephaestus!))
+        (p (unify:compose-prometheus!))
+        (m (unify:compose-hermes!)))
+    (list a h p m)))
+
+(define (unify:compose-ok? results)
+  (if (not (pair? results))
+    #f
+    (let loop ((ys results))
+      (cond ((null? ys) #t)
+            ((not (pair? (car ys))) #f)
+            ((not (unify:alist-ref ":ok" (car ys) #f)) #f)
+            (else (loop (cdr ys)))))))

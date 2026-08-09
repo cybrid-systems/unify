@@ -1,0 +1,119 @@
+; examples/03-git-host-probe/main.aura
+;
+; Dig Aura host residuals around libgit2-backed git-* prims (#1970):
+;   git-status, git-diff, git-log, git-commit, git-branch-current,
+;   git-stage, git-rev-parse
+;
+; Also classifies synthetic error strings (host vs denseness vs llm).
+; Does NOT write to git (no stage/commit) — read-only by default.
+; Set UNIFY_GIT_WRITE=1 to attempt stage of a dry path (expect fail/refuse).
+;
+;   ./scripts/run-aura.sh examples/03-git-host-probe/main.aura
+
+(require "std/string" all:)
+(require "unify-min" all:)
+
+(unify:stats-reset!)
+
+(display "=== Unify 03-git-host-probe: Aura git-* + classify ===")
+(newline)
+
+(define probe (unify:git-probe!))
+(display "probe: ")
+(write probe)
+(newline)
+
+; Keep values in one let so we do not trip top-level define-after-define
+; host residuals under multi-span require (see set-code-module-bind).
+(let* ((probed-rev (unify:alist-ref ":rev" probe ""))
+       (probed-branch (unify:alist-ref ":branch" probe ""))
+       (probed-log (unify:alist-ref ":log" probe ""))
+       (probed-status (unify:alist-ref ":status" probe ""))
+       (check-count 0)
+       (fail-count 0)
+       (ck
+         (lambda (label ok)
+           (set! check-count (+ check-count 1))
+           (if ok
+             (begin (unify:stats-bump! "correctness_ok") #t)
+             (begin
+               (set! fail-count (+ fail-count 1))
+               (unify:stats-bump! "correctness_fail")
+               (display "  FAIL check=")
+               (display label)
+               (newline)
+               #f)))))
+
+  (ck "rev-nonempty" (and (string? probed-rev) (> (string-length probed-rev) 0)))
+  (ck "branch-nonempty" (and (string? probed-branch) (> (string-length probed-branch) 0)))
+  (ck "log-nonempty" (and (string? probed-log) (> (string-length probed-log) 0)))
+  (ck "status-string" (string? probed-status))
+  (ck "probe-ok" (unify:alist-ref ":ok" probe #f))
+
+  ; Classification table
+  (let ((class-host (unify:classify-signal "error: unbound variable: foo"))
+        (class-dense (unify:classify-signal "verify-fail denseness rollback"))
+        (class-llm (unify:classify-signal "llm-fail rate-limit MiniMax"))
+        (class-unk (unify:classify-signal "hello world")))
+    (ck "class-host" (equal? class-host "host"))
+    (ck "class-denseness" (equal? class-dense "denseness"))
+    (ck "class-llm" (equal? class-llm "llm"))
+    (ck "class-unknown" (equal? class-unk "unknown"))
+    (display "classify: host=")
+    (display class-host)
+    (display " denseness=")
+    (display class-dense)
+    (display " llm=")
+    (display class-llm)
+    (display " unk=")
+    (display class-unk)
+    (newline))
+
+  (display "fingerprint sample=")
+  (display (unify:fingerprint "unbound variable: eval_flat"))
+  (newline)
+
+  ; Optional write probe (expect non-zero / refuse without dirty intent)
+  (let ((write-env (getenv "UNIFY_GIT_WRITE")))
+    (if (and (string? write-env)
+             (or (equal? write-env "1") (equal? write-env "true")))
+      (begin
+        (display "write-probe: stage missing path (expect rc!=0 or host flag)")
+        (newline)
+        (let ((rc (unify:git-stage-safe! ".__unify_no_such_path__")))
+          (display "  git-stage rc=")
+          (display rc)
+          (newline)
+          (ck "stage-responded" (number? rc))))
+      (begin
+        (display "write-probe: skipped (set UNIFY_GIT_WRITE=1 to enable)")
+        (newline))))
+
+  (display "stats: ")
+  (write (unify:stats-alist))
+  (newline)
+  (display "escapes=")
+  (display (unify:stats-ref "escapes"))
+  (display " host_flags=")
+  (display (unify:stats-ref "host_flags"))
+  (newline)
+
+  (if (and (= fail-count 0) (>= check-count 8))
+    (begin
+      (display "PASS: git host probe")
+      (newline)
+      (display "RESULT pass example=03-git-host-probe rev=")
+      (display probed-rev)
+      (display " branch=")
+      (display probed-branch)
+      (display " escapes=")
+      (display (unify:stats-ref "escapes"))
+      (newline))
+    (begin
+      (display "FAIL: git host probe fails=")
+      (display fail-count)
+      (display " checks=")
+      (display check-count)
+      (newline)
+      (display "RESULT fail example=03-git-host-probe")
+      (newline))))

@@ -12,7 +12,11 @@ required=(
   lib/unify-min.aura
   lib/unify-measure.aura
   lib/unify-loop.aura
+  lib/unify-host.aura
+  lib/unify-compose.aura
+  examples/01-offline-compose/main.aura
   examples/02-live-evolve/main.aura
+  examples/03-git-host-probe/main.aura
   scripts/run-aura.sh
   scripts/run-offline.sh
   scripts/env-minimax.sh
