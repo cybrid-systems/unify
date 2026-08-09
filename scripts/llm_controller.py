@@ -252,11 +252,14 @@ def main() -> int:
     memory = ""
     if args.memory and Path(args.memory).is_file():
         memory = "\n".join(Path(args.memory).read_text(encoding="utf-8", errors="replace").splitlines()[-40:])
+    # Cap each source file in the prompt (full files still on disk for actuator).
+    max_src = int(os.environ.get("UNIFY_LLM_SRC_CHARS", "24000"))
     sources: dict[str, str] = {}
     for rel in args.source or ["lib/kv.aura"]:
         p = proj / rel
         if p.is_file():
-            sources[rel] = p.read_text(encoding="utf-8", errors="replace")
+            raw = p.read_text(encoding="utf-8", errors="replace")
+            sources[rel] = clip_source(rel, raw, max_src)
 
     user = build_user(
         project=str(proj),
