@@ -17,6 +17,8 @@
 ;             (min, max, product, avg).
 ; Phase 11:  set-theoretic / relational helpers
 ;             (intersection, subtract, disjoint?, subset?).
+; Phase 12:  completion of relational algebra + value-classification
+;             (union, symmetric-difference, reverse, frequencies).
 ;
 ; Store representation: alist of (key . val) pairs.
 ;   * Keys are strings.
@@ -78,9 +80,13 @@
         kv:intersection
         kv:subtract
         kv:disjoint?
-        kv:subset?)
+        kv:subset?
+        kv:union
+        kv:symmetric-difference
+        kv:reverse
+        kv:frequencies)
 
-(define kv:version 11)
+(define kv:version 12)
 
 ; ---------------------------------------------------------------------------
 ; Internal alist primitives.
@@ -847,3 +853,106 @@
                 #f)
               #f))
           (loop (cdr xs)))))))
+
+; ---------------------------------------------------------------------------
+; Phase 12 completion of relational algebra + value-classification helpers.
+; Pure functional; insertion order of the LEFT (or sole) operand is
+; preserved by construction; no FS escapes. All derive from the existing
+; alist primitives (`_fold`, `_set`, `_has`).
+;
+; Conventions:
+;   * `kv:union` mirrors `kv:merge`'s right-wins bias and the
+;     "a's order for shared keys, b-only appended at end" insertion-
+;     order rule — these are exactly the set-theoretic union semantics
+;     for keyed collections, made explicit under a clearer name.
+;   * `kv:symmetric-difference` (XOR) returns `(left-only . right-only)`
+;     — keys present in either operand but not both. Keys in both
+;     operands cancel out. Each sub-store preserves its source's
+;     insertion order. This is the natural complement to
+;     `kv:intersection` and `kv:subtract` to close the relational
+;     algebra over stores.
+;   * `kv:reverse` is a structural reversal of the alist — it flips
+;     insertion order so the LAST entry becomes FIRST. Complements the
+;     positional family (first/last/rest/butlast/take/drop) for LIFO
+;     traversal and reverse-ordered views.
+;   * `kv:frequencies` counts value occurrences, returning an alist
+;     of (value . count) pairs in the order each value was first
+;     observed. Later duplicates increment the existing counter; new
+;     values are appended. Empty store returns ().
+; ---------------------------------------------------------------------------
+
+; (kv:_bump xs key) -> fresh alist with key's count incremented by 1.
+; Used by kv:frequencies to accumulate value counts in insertion
+; order. If `key` is absent from `xs`, (key . 1) is appended at the
+; end. If `key` is present, its count is incremented in place
+; (preserving the first-occurrence position). Defensive against
+; stray non-pair cells (they are skipped past, never matched).
+(define (kv:_bump xs key)
+  (if (null? xs)
+    (list (cons key 1))
+    (let ((p (car xs)))
+      (if (and (pair? p) (equal? (car p) key))
+        (cons (cons key (+ (cdr p) 1)) (cdr xs))
+        (cons p (kv:_bump (cdr xs) key))))))
+
+; (kv:union a b) -> store.
+; Set union: keys present in either operand. Shared keys retain `a`'s
+; value (a is the LEFT operand and its values are already in place;
+; the fold over `b` only ADDS b-only keys, never overwrites them).
+; `a`'s order is preserved for shared keys; `b`-only keys are appended
+; at the end in `b`'s order. Single fold over `b`; no intermediate
+; alist materialised. Equivalent to `kv:merge` in semantics; provided
+; under the explicit set-theoretic name for symmetry with
+; `kv:intersection` and `kv:subtract`.
+(define (kv:union a b)
+  (kv:_fold b a
+    (lambda (k v acc)
+      (if (kv:_has acc k)
+        acc
+        (kv:_set acc k v)))))
+
+; (kv:symmetric-difference a b) -> (left-only . right-only).
+; XOR: keys present in `a` but not `b` appear in left-only with
+; `a`'s value; keys present in `b` but not `a` appear in right-only
+; with `b`'s value. Keys present in both operands are dropped
+; (they "cancel out"). Each sub-store preserves its source's
+; insertion order. Closes the relational algebra: union /
+; intersection / subtract / symmetric-difference cover the four
+; fundamental binary set operations over keyed collections.
+(define (kv:symmetric-difference a b)
+  (let ((left-only
+          (kv:_fold a (quote ())
+            (lambda (k v acc)
+              (if (kv:_has b k)
+                acc
+                (kv:_set acc k v)))))
+        (right-only
+          (kv:_fold b (quote ())
+            (lambda (k v acc)
+              (if (kv:_has a k)
+                acc
+                (kv:_set acc k v))))))
+    (cons left-only right-only)))
+
+; (kv:reverse store) -> store.
+; Reverses the insertion order of `store`. The new first entry is
+; what was previously the last; the new last entry is what was
+; previously the first. Empty store returns (). Size and contents
+; (key multiset + per-key values) are preserved by construction —
+; only the order changes. Complements the positional family
+; (first/last/rest/butlast/take/drop) for LIFO traversal and
+; reverse-ordered views.
+(define (kv:reverse store)
+  (reverse store))
+
+; (kv:frequencies store) -> ((value . count) ...).
+; Returns an alist of (value . count) pairs in the order each value
+; was first observed during the fold. The first occurrence of each
+; value starts the counter at 1; later occurrences increment the
+; existing counter in place (preserving the first-occurrence
+; position). Empty store returns (). Non-pair cells in the source
+; are skipped defensively (via `_fold`). Uses the internal
+; `kv:_bump` helper to maintain counter state across the fold.
+(define (kv:frequencies store)
+  (kv:_fold store (quote ())
+    (lambda (k v acc) (kv:_bump acc v))))
