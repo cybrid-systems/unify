@@ -1,9 +1,9 @@
 {
-  "generation": 21,
-  "factor": 43,
-  "body": "(lambda (x) (* x 43))",
+  "generation": 22,
+  "factor": 45,
+  "body": "(lambda (x) (* x 45))",
   "status": "ok",
-  "updated": "2026-08-09T04:21Z",
+  "updated": "2026-08-09T04:22Z",
   "last_decision": "select",
   "last_mode": "multi-sandbox-select",
   "history": [
@@ -221,6 +221,17 @@
       "to_generation": 21,
       "factor": 43,
       "body": "(lambda (x) (* x 43))",
+      "decision": "select",
+      "candidates_tried": 1,
+      "candidates_n": 1,
+      "mode": "multi-sandbox-select"
+    },
+    {
+      "ts": "2026-08-09T04:22Z",
+      "from_generation": 21,
+      "to_generation": 22,
+      "factor": 45,
+      "body": "(lambda (x) (* x 45))",
       "decision": "select",
       "candidates_tried": 1,
       "candidates_n": 1,
