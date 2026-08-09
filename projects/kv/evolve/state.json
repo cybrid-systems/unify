@@ -472,18 +472,18 @@
       "direction": "**Surgical patch to `tests/load-sim.aura` only**: tune each profile's policy from a shared `base` (hybrid cap=4) to the policy that actually wins for that access pattern. Three of four profiles \u2192 alist (no cache benefit, cache walk is pure overhead); hotspot stays hybrid but with the cache size **shrunk** from 8 \u2192 4 (working set fits exactly; cache-lookup + cache-put walk length both halve). Keep `kv:engine-version` at 2; no engine code changes; smoke API surface untouched.\n\nWhat NOT to touch:\n-"
     }
   ],
-  "updated": "2026-08-09T12:56Z",
+  "updated": "2026-08-09T12:58Z",
   "last_review": "- **Correctness**: smoke 148/148 full-green across Phases 0\u201316. Pure Aura alist-of-cons store, defensive skipping of stray non-pair cells, insertion order preserved by every op, no FS / network / host escape. Export-before-define discipline intact.\n- **Load metrics (baseline 3037)** \u2014 `engine=v2` already collapsed the per-read index-rebuild + index-lookup, so the next bottleneck is the **per-op cache overhead** on workloads where the cache cannot pay for itself:\n  - `uniform-read` 644 ops/s, hit_rate 0% \u2014 cache_size=8 < N-KEYS=32, so every cache-miss evicts an old key before any revisit \u2192 96/96 cache misses \u2192 ~50 cells of cache-lookup + cache-put work per miss for **zero** hit benefit.\n  - `hotspot-read` 959 ops/s, hit_rate 95% \u2014 cache_size=8 fits the 4 hot keys with room to spare; **shrinking cap to 4** halves cache-lookup + cache-put walk cost while keeping hit_rate \u226595%.\n  - `write-heavy` 768 ops/s \u2014 every set still pays `kv:_cache-put` (8-cell remove + 8-cell take + 8-cell reverse = ~50 cells) for cache that is **never read**. Pure waste.\n  - `mixed` 666 ops/s, hit_rate 0% \u2014 same uniform-rotation cache thrash as `uniform-read`; cache contributes nothing.\n- **Risk** \u2014 the engine's `kv:engine-tune` already returns a fresh engine that preserves body and clears cache/index (rebuilds+1). Tuning between profiles in load-sim touches no contract used by smoke. L1\u2013L6 assertions still hold under per-profile tuning.",
   "last_direction": "**Surgical patch to `tests/load-sim.aura` only**: tune each profile's policy from a shared `base` (hybrid cap=4) to the policy that actually wins for that access pattern. Three of four profiles \u2192 alist (no cache benefit, cache walk is pure overhead); hotspot stays hybrid but with the cache size **shrunk** from 8 \u2192 4 (working set fits exactly; cache-lookup + cache-put walk length both halve). Keep `kv:engine-version` at 2; no engine code changes; smoke API surface untouched.\n\nWhat NOT to touch:\n- `lib/kv-engine.aura` \u2014 `engine-get` / `engine-set` / `engine-tune` are already optimal for their policies; the win is on the *caller* side choosing the right policy.\n- `lib/kv.aura` \u2014 store API + helpers untouched.\n- `tests/smoke.aura` \u2014 full-green floor preserved.\n- N-KEYS / N-OPS \u2014 keep at 32 / 96 for direct comparability with prior generations.",
-  "best_load_score": 9228.0,
+  "best_load_score": 9269.0,
   "last_squeeze": {
-    "ts": "2026-08-09T12:56Z",
+    "ts": "2026-08-09T12:58Z",
     "mode": "alist",
     "cache": 0,
     "thr": 9999,
-    "grid_score": "5631",
-    "verify_score": "9228",
-    "baseline": "7519",
+    "grid_score": "5375",
+    "verify_score": "9269",
+    "baseline": "9228",
     "applied": true
   }
 }
