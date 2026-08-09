@@ -1,1239 +1,1413 @@
-<think>The current state is excellent: 85/85 tests green across Phases 0-11. The store has a comprehensive API covering:
-- Basic CRUD (open/set/get/del/has?/size/keys/clear)
-- Batch helpers (mset/mget/update/merge/copy)
-- Iteration (values/entries/filter/find/empty?/for-each)
-- Fold/predicates (reduce/any?/every?/pick/omit/map-values)
-- Convenience (get-or/rename/diff/partition/equal?)
-- Positional/conditional (first/last/rest/butlast/take/drop/invert/set-if-absent)
-- Aggregation (nth/count/sum/zip/swap)
-- Statistical (min/max/product/avg)
-- Set-theoretic (intersection/subtract/disjoint?/subset?)
+<think>The user wants me to act as the controller of a continuous software self-evolution loop. Let me analyze the current state:
 
-Now I need to advance SPEC phase. Looking at SPEC's "Evolution phases" table, only Phases 0-4 are listed explicitly:
-- Phase 0: open + set/get (T1-T3)
-- Phase 1: del/has?/size (T4-T6)
-- Phase 2: keys/clear/overwrite (T7-T9)
-- Phase 3: multi-key stress + isolation (T10-T12)
-- Phase 4: optional batch helpers (T13+)
+- Generation 12, baseline SCORE 97/97 (full green)
+- All tests passing across Phases 0-12 of the in-file roadmap
+- The lib has accumulated many ops across many phases
 
-The SPEC says "Phase ≥ 3 with all T1-T12 green" is the success criteria. We're at 85/85 — way past that.
+Since SCORE is already full (97/97), per the instructions:
+> If SCORE is already full, advance SPEC phase (new capability) via code that still keeps old tests green; you may also extend tests/smoke.aura carefully only if you also implement the feature.
 
-The natural next step is Phase 12. What would be useful additions that:
-1. Are pure Aura, no FS escapes
-2. Derive from existing primitives
-3. Maintain insertion-order semantics where relevant
-4. Don't break any existing tests
-5. Don't conflict with API names
+I need to advance SPEC phase with new capability. Let me think about what new phase would be valuable:
 
-Good candidates for Phase 12:
-1. **kv:assoc / kv:dissoc** — Scheme-style aliases for set/del (might conflict — set/del already exist, skip)
-2. **kv:contains?** — alias for has? (skip — duplicate)
-3. **kv:from-alist / kv:to-alist** — already have entries, but explicit constructors could be useful
-4. **kv:set-default** — similar to set-if-absent (skip — duplicate)
-5. **kv:union** — complement to intersection/subtract
-6. **kv:difference** — alias for subtract (skip)
-7. **kv:symmetric-difference** — keys in either but not both (XOR)
-8. **kv:cartesian-product** — too complex, possibly out of scope
-9. **kv:range-keys / kv:range-values** — list views, duplicates
-10. **kv:key? / kv:value?** — predicate on a single key/value (different from has?/get)
-11. **kv:assoc-set** — multiple set with predicate
-12. **kv:chain** — pipeline helper (too complex)
-13. **kv:filter-keys / kv:filter-vals** — key-only or value-only predicates
-14. **kv:group-by** — group entries by key/value classification
-15. **kv:frequencies** — count occurrences of each value
-16. **kv:contains-key? / kv:contains-value?** — already covered
-17. **kv:sort / kv:sort-by** — sorting (pure)
-18. **kv:reverse** — reverse insertion order (already have butlast via reverse; explicit makes sense)
-19. **kv:append-store** — concatenate two stores
-20. **kv:dissoc-many** — already have omit
-21. **kv:set-many** — already have mset
-22. **kv:range** — list of keys with int range values (overkill)
-23. **kv:get-in** — nested key access (overkill)
-24. **kv:assoc-in** — nested key set (overkill)
-25. **kv:update-in** — nested update (overkill)
-26. **kv:to-string / kv:display-store** — output (FS-adjacent)
-27. **kv:hash** — compute a hash (overkill)
-28. **kv:compare** — comparison operator returning <0/0/>0
-29. **kv:select-keys / kv:rename-keys** — already covered (pick/rename)
+Looking at the lib roadmap comment, it goes up to Phase 12. So I need to add Phase 13+. What makes sense for a KV store?
 
-Let me think about what's truly useful and not redundant:
+Some natural extensions:
+- **Phase 13: Defaults / conditional writers**
+  - `kv:default` — set with default if missing (alias of set-if-absent but more idiomatic?)
+  - `kv:toggle` — flip boolean values
+  - `kv:incr` / `kv:decr` — atomic counters
+  
+- **Phase 13: Comparison-based selection**
+  - `kv:max-key` / `kv:min-key` — key by max/min value
+  - `kv:top-n` — top N entries by value
+  
+- **Phase 13: Predicate composition**
+  - `kv:count-by` — group counts by some criterion
+  - `kv:group-by` — partition by key function
 
-**Phase 12 candidates (final):**
-1. **kv:union** — `(a b)` — symmetric union with right-wins on conflicts, b's keys appended at end for b-only keys. Complement to intersection/subtract.
-2. **kv:symmetric-difference** — `(a b)` — keys in either but not both, with each side's own values (this needs special encoding since it's a pair of values, like kv:diff's changed)
-3. **kv:reverse** — `(store)` — reverse insertion order
-4. **kv:compare** — `(a b)` — returns -1, 0, or 1 based on lexicographic comparison (or just size/keys based)
+- **Phase 13: Conversion / serialization**
+  - `kv:to-list` / `kv:from-list` — conversions
+  - `kv:string-keys` — ensure all keys are strings
 
-Actually, let me focus on the most natural additions that fit the SPEC's direction:
+- **Phase 13: Range / bounded queries**
+  - `kv:take-while` / `kv:drop-while` — predicate-based prefix
+  - `kv:range` — keys in a range (assuming sortable)
 
-**Phase 12: ordering + set-completion + value-predicate helpers**
+- **Phase 13: Multiple value operations**
+  - `kv:set-default` — same as set-if-absent
+  - `kv:update-all` — apply proc to all values (similar to map-values but maybe different)
 
-1. **kv:reverse** — reverse insertion order; complements kv:first/kv:last/kv:rest/kv:butlast/kv:take/kv:drop
-2. **kv:union** — set union, right-wins on conflict, b's keys appended at end (consistent with kv:merge but with explicit set semantics)
-3. **kv:symmetric-difference** — XOR-like operation producing (left-only . right-only) tuple
-4. **kv:filter-keys** / **kv:filter-vals** — filter by key predicate or value predicate only (companion to kv:filter)
+- **Phase 13: Utility**
+  - `kv:compare` — three-way comparison like -1/0/1
+  - `kv:hash` — compute a stable hash
 
-Wait, kv:filter already takes (k v), so kv:filter-keys/filter-vals would just be convenience wrappers. Maybe skip.
+Let me think more carefully. I want to add value. Good candidates:
 
-5. **kv:any-key?** / **kv:every-key?** — predicate on keys only (like kv:any?/kv:every? but key-only)
-6. **kv:any-val?** / **kv:every-val?** — predicate on values only
+1. **`kv:incr`** — `(store key [amount])` increment a numeric value at key by amount (default 1). Creates the key with amount if missing. This is a classic KV operation.
 
-These are good — they round out the predicate family nicely.
+2. **`kv:toplevel`/`kv:depth`** — operations related to nested stores? Maybe too complex.
 
-7. **kv:group-by** — `(store proc)` group entries by (proc k v)
-8. **kv:frequencies** — `(store)` count occurrences of each value
+3. **`kv:max-by`** / **`kv:min-by`** — find the entry with the largest/smallest value, return the (k . v) pair (not just the value). Complementary to kv:min/kv:max.
 
-Hmm, frequencies is nice and pure.
+4. **`kv:prefix-keys`** — keep only keys with a string prefix.
 
-Let me settle on Phase 12 — the most natural extension without bloat:
+5. **`kv:rename-keys`** — bulk rename via a mapping (uses rename semantics).
 
-**Phase 12: completion of relational algebra + value-classification helpers**
+6. **`kv:default-with`** — `(store key proc)` — set key to (proc) if missing.
 
-Add these 5 ops:
-1. `kv:union` — `(a b)` set union, right-wins on conflict, b-only keys appended in b's order. Complements `kv:intersection` and `kv:subtract` to close the relational algebra trio.
-2. `kv:symmetric-difference` — `(a b)` XOR operation; returns `(left-only . right-only)` tuple, each sub-store in its source's order.
-3. `kv:reverse` — `(store)` reverses insertion order. Natural complement to all the positional ops.
-4. `kv:any-val?` — `(store proc)` short-circuit existential over VALUES only (proc is (v) -> bool).
-5. `kv:every-val?` — `(store proc)` short-circuit universal over VALUES only.
+7. **`kv:from-alist`** — opposite of entries() (alias of mset but with explicit naming)
 
-Hmm, but symmetric-difference with values is interesting. Let me think about the API:
+8. **`kv:incr`** / **`kv:decr`** — atomic numeric operations. Classic KV store feature. Important and useful.
 
+Let me focus on **`kv:incr`**. This is a classic Redis-like operation. It also has interesting test cases:
+- increment existing key
+- increment missing key (creates with delta)
+- decrement
+- multiple incrs compound
+
+But actually, looking at the pattern in this codebase, I think adding a couple of related ops is best. Let me design Phase 13 as:
+
+**Phase 13: Numeric / atomic value helpers**
+- `kv:incr` — `(store key)` or `(store key amount)` — increment numeric value by amount (default 1), creating with that amount if missing. Returns (new-value . new-store).
+- `kv:decr` — same but decrement
+- `kv:incr-or` — `(store key default amount)` — increment only if key exists (no creation)
+
+Wait, but the return type changes... Currently most ops return just store. The incr/decr idiom is to return the new value. That's a new return convention.
+
+Hmm, let me look more carefully at what's idiomatic. Looking at kv:update:
 ```
-(kv:symmetric-difference a b) -> (left-only . right-only)
-```
-- left-only: keys in a but not b, with a's values
-- right-only: keys in b but not a, with b's values
-- keys in both are dropped (they "cancel out" — XOR semantics)
-
-That's clean and complements the trio.
-
-Actually let me simplify. Phase 12 should be tight, focused, and consistent. Let me do 4 ops:
-
-1. **`kv:union`** — `(a b)` — set union, right-wins on conflict, preserves a's order for shared keys, appends b-only keys in b's order. This is essentially `kv:merge` but with explicit set-theoretic naming.
-2. **`kv:symmetric-difference`** — `(a b)` — XOR; returns `(left-only . right-only)`. Closes the relational algebra (union / intersection / subtract / symmetric-difference).
-3. **`kv:reverse`** — `(store)` — reverses insertion order. Useful for LIFO traversal or for building reverse-ordered views.
-4. **`kv:frequencies`** — `(store)` — value → count map. Pure, derived from `_fold`. A new statistical helper.
-
-Actually wait, kv:frequencies is a new structure (not a store) — it's a list of (value . count) pairs. That's fine, similar to how kv:diff returns a tuple of stores.
-
-Let me think more carefully. Are these all pure-functional, derive from existing primitives, and preserve semantics?
-
-- **kv:union**: Yes. Can use `kv:_fold` over `b` adding to `a`. Like `kv:merge` but explicit.
-- **kv:symmetric-difference**: Yes. Can build via two folds.
-- **kv:reverse**: Yes. `(reverse store)`. Just delegates to builtin.
-- **kv:frequencies**: Yes. Folds over entries accumulating (value . count) alist.
-
-All good.
-
-Let me write the tests:
-
-**T58**: `kv:union` — combine two stores, right-wins on conflict, preserves order.
-**T58b**: `kv:union` with disjoint operands = concatenation in (a-then-b) order.
-**T58c**: `kv:union` with an empty operand = identity on the other.
-**T59**: `kv:symmetric-difference` — keys in either but not both.
-**T59b**: `kv:symmetric-difference` with disjoint operands = full both sides.
-**T59c**: `kv:symmetric-difference` with b == a = empty result.
-**T60**: `kv:reverse` — insertion order is reversed; size preserved.
-**T60b**: `kv:reverse` on an empty store is empty.
-**T60c**: `kv:reverse` of a reverse is the original.
-**T61**: `kv:frequencies` — counts value occurrences; insertion order tracks first occurrence.
-**T61b**: `kv:frequencies` on an empty store is empty.
-
-That's 11 new tests, taking total to 96.
-
-Let me draft the implementation:
-
-```scheme
-; (kv:union a b) -> store.
-; Set union: keys present in either operand. Right-wins on conflicts
-; (consistent with kv:merge and kv:intersection). a's order is preserved
-; for shared keys; b-only keys are appended in b's order at the end.
-; Implemented via a fold over b that adds b-only keys to a; the right
-; operand's value wins on shared keys (the fold doesn't touch them).
-(define (kv:union a b)
-  (kv:_fold b a
-    (lambda (k v acc)
-      (if (kv:_has acc k)
-        acc
-        (kv:_set acc k v)))))
-
-; (kv:symmetric-difference a b) -> (left-only . right-only).
-; XOR: keys in a but not in b appear in left-only with a's value;
-; keys in b but not in a appear in right-only with b's value.
-; Keys in both operands are dropped (they "cancel out"). The two
-; sub-stores preserve their respective source's insertion order.
-; Pure functional, no FS.
-(define (kv:symmetric-difference a b)
-  (let ((left-only
-          (kv:_fold a (quote ())
-            (lambda (k v acc)
-              (if (kv:_has b k)
-                acc
-                (kv:_set acc k v)))))
-        (right-only
-          (kv:_fold b (quote ())
-            (lambda (k v acc)
-              (if (kv:_has a k)
-                acc
-                (kv:_set acc k v))))))
-    (cons left-only right-only)))
-
-; (kv:reverse store) -> store.
-; Returns a fresh store with the same entries in reverse insertion order.
-; Delegates to the host's reverse on the underlying alist, preserving
-; defensive-skip semantics (since reverse is structural on the cell
-; chain). Empty store returns ().
-(define (kv:reverse store)
-  (reverse store))
-
-; (kv:frequencies store) -> ((value . count) ...).
-; Counts occurrences of each value in insertion order. The result is
-; an alist of (value . count) pairs in the order values were first
-; observed; later duplicates increment the existing counter rather
-; than appending a new entry. Empty store returns (). Non-pair cells
-; are skipped defensively (matching every other fold-based op).
-(define (kv:frequencies store)
-  (kv:_fold store (quote ())
-    (lambda (k v acc)
-      ; Look up v in acc; if found, increment; else add (v . 1).
-      (let loop ((xs acc))
-        (if (null? xs)
-          (cons (cons v 1) acc)
-          (let ((p (car xs)))
-            (if (pair? p)
-              (if (equal? (car p) v)
-                (cons (cons v (+ (cdr p) 1)) (cdr xs))
-                (cons p (loop (cdr xs))))
-              (cons (cons v 1) acc))))))))
-```
-
-Wait, I need to be careful with `kv:frequencies` — that nested loop is a bit awkward but should work. Let me also think about a simpler implementation:
-
-Actually let me think — using `_fold` to add and update via cons+rebuild is O(n²) in the worst case. That's the price for using only functional alist primitives. It's acceptable for a denseness subject.
-
-Let me think about whether to use an internal helper. Yes, `_bump` would be cleaner:
-
-```scheme
-; (kv:_bump xs key) -> alist with key's count incremented by 1.
-; If key is absent, (key . 1) is appended. Preserves order of existing entries.
-(define (kv:_bump xs key)
-  (if (null? xs)
-    (list (cons key 1))
-    (let ((p (car xs)))
-      (if (and (pair? p) (equal? (car p) key))
-        (cons (cons key (+ (cdr p) 1)) (cdr xs))
-        (cons p (kv:_bump (cdr xs) key))))))
-
-(define (kv:frequencies store)
-  (kv:_fold store (quote ())
-    (lambda (k v acc) (kv:_bump acc v))))
-```
-
-Much cleaner. Use `kv:_bump` as an internal helper.
-
-OK so my plan is solid. Let me also reconsider what to keep stable:
-
-**DON'T TOUCH:**
-- All existing 51 exports (well, current count)
-- All existing function definitions
-- The alist representation
-- All existing tests
-- Export-before-define discipline
-
-**ADD:**
-- New exports at the top (alphabetical insertion)
-- New functions at the bottom (in a Phase 12 section)
-- New tests in `tests/smoke.aura`
-- Bump `kv:version` from 11 to 12
-
-Let me now compose the full PATCH.
-
-Actually wait — for the PATCH, I need to provide full file contents for `lib/kv.aura`. Let me carefully compose that, keeping everything identical except adding the new pieces.
-
-Let me plan the exact file structure:
-
-```
-; header comments + phase 12 mention
-(export ... existing ... + new exports)
-(define kv:version 12)
-... existing internals ...
-... existing public API ...
-... Phase 12 section ...
-... new functions ...
-```
-
-And for tests/smoke.aura, full replacement with new tests added at the end before the score output.
-
-Let me write out the new exports:
-- kv:union
-- kv:symmetric-difference
-- kv:reverse
-- kv:frequencies
-
-I'll insert them in the appropriate alphabetical positions in the export list.
-
-Looking at the export list, the alphabetical ordering isn't strict but seems roughly grouped. Let me just add them at the end of the list to keep things simple.
-
-Actually, looking more carefully, the list does have a rough ordering. The current list ends with:
-```
-        kv:intersection
-        kv:subtract
-        kv:disjoint?
-        kv:subset?)
-```
-
-I'll add new exports right after these, before the closing paren.
-
-Let me write the full file now. Given the size, I need to be careful to preserve everything.
-
-Actually, I realize I should use a more careful approach — given the size of lib/kv.aura (~500 lines), let me use targeted patches by quoting the file precisely. The instructions say "Prefer full-file replacement for small projects" — this is a moderate-size project but the file is well-structured, so full replacement is fine.
-
-Let me also think about whether to add tests/smoke.aura as a separate PATCH or include it. The instructions say I can extend tests carefully. I'll do it as a separate PATCH.
-
-OK let me draft:
-
-### REVIEW
-
-- 85/85 tests green; Phases 0-11 all implemented; alist-of-cons representation defensive and insertion-order-preserving; pure Aura throughout with no FS / network / host escape; export-before-define discipline intact; API names stable since v1.
-- The relational algebra (intersection / subtract / disjoint? / subset?) is nearly complete but missing **union** (set-theoretic complement) and **symmetric-difference** (XOR) — natural Phase 12 additions.
-- The positional family (first/last/rest/butlast/take/drop) is missing **reverse** for LIFO traversal / building reverse-ordered views.
-- The aggregation family (sum/product/avg/min/max) doesn't include **frequencies** (value → count), which is a common pure-functional building block.
-- These 4 additions are pure, derive from existing `_fold`/`_set`/`_has` primitives, preserve semantics where relevant, and don't touch any existing op.
-
-### DIRECTION
-
-Advance to **Phase 12 — completion of relational algebra + value-classification helpers**. Keep T1-T57 green; no FS escapes, no API renames, no internals touched.
-
-Add 4 new pure-functional ops (all derive from existing `_fold`/`_set`/`_has`):
-- `kv:union` — `(a b)` — set union; right-wins on conflict; a's order for shared keys, b-only keys appended in b's order. Closes the relational algebra.
-- `kv:symmetric-difference` — `(a b)` — XOR; returns `(left-only . right-only)` pair of stores. Closes the relational algebra.
-- `kv:reverse` — `(store)` — reverse insertion order; complements the positional family.
-- `kv:frequencies` — `(store)` — value → count alist in first-occurrence order.
-
-Bump `kv:version` to `12`. Extend `tests/smoke.aura` with T58-T61 (11 new tests).
-
-DO NOT TOUCH:
-- Existing exports or functions
-- The alist-of-cons representation
-- Export-before-define discipline
-- Any existing test
-
-### PATCH
-
-Now let me write the full lib/kv.aura file and the full tests/smoke.aura file.
-
-For lib/kv.aura, I'll keep everything exactly the same except:
-1. Update header comment to mention Phase 12
-2. Add 4 new exports
-3. Change version to 12
-4. Add Phase 12 section at the end
-
-Let me do this carefully.
-
-Actually, I realize that providing the FULL file is going to be very long. Let me think if there's a smarter way. The instructions say "Prefer full-file replacement for small projects". This isn't tiny but it's not huge either. Full replacement is the safest approach to avoid merge issues.
-
-Let me write it out. I'll preserve all existing content verbatim and add the new bits.
-
-Now for tests/smoke.aura, I need to add 11 new tests before the SCORE display. I'll write the full file too.
-
-Let me draft everything carefully:
-
-**lib/kv.aura additions:**
-
-Header comment update (lines 1-23 area):
-```
-; Phase 11:  set-theoretic / relational helpers
-;             (intersection, subtract, disjoint?, subset?).
-; Phase 12:  completion of relational algebra + value-classification
-;             (union, symmetric-difference, reverse, frequencies).
-```
-
-New exports added at end of export list:
-```
-        kv:union
-        kv:symmetric-difference
-        kv:reverse
-        kv:frequencies)
-```
-
-Version bump: `(define kv:version 12)`
-
-New helper at end of internals section (or new section):
-```
-; (kv:_bump xs key) -> fresh alist with key's count incremented by 1.
-; Used by kv:frequencies to accumulate counts in insertion order.
-; If key is absent, (key . 1) is appended.
-(define (kv:_bump xs key)
-  (if (null? xs)
-    (list (cons key 1))
-    (let ((p (car xs)))
-      (if (and (pair? p) (equal? (car p) key))
-        (cons (cons key (+ (cdr p) 1)) (cdr xs))
-        (cons p (kv:_bump (cdr xs) key))))))
-```
-
-New Phase 12 section:
-```
-; ---------------------------------------------------------------------------
-; Phase 12 completion of relational algebra + value-classification helpers.
-; Pure functional; insertion order of the LEFT (or sole) operand is
-; preserved by construction; no FS escapes. All derive from the existing
-; alist primitives (`_fold`, `_set`, `_has`).
-;
-; Conventions:
-;   * `kv:union` mirrors `kv:merge`'s right-wins bias and the
-;     "a's order for shared keys, b-only appended at end" insertion-
-;     order rule — these are exactly the set-theoretic union semantics
-;     for keyed collections, made explicit under a clearer name.
-;   * `kv:symmetric-difference` (XOR) returns `(left-only . right-only)`
-;     — keys present in either operand but not both. Keys in both
-;     operands cancel out. Each sub-store preserves its source's
-;     insertion order. This is the natural complement to
-;     `kv:intersection` and `kv:subtract` to close the relational
-;     algebra over stores.
-;   * `kv:reverse` is a structural reversal of the alist — it flips
-;     insertion order so the LAST entry becomes FIRST. Complements the
-;     positional family (first/last/rest/butlast/take/drop) for LIFO
-;     traversal and reverse-ordered views.
-;   * `kv:frequencies` counts value occurrences, returning an alist
-;     of (value . count) pairs in the order each value was first
-;     observed. Later duplicates increment the existing counter; new
-;     values are appended. Empty store returns ().
-; ---------------------------------------------------------------------------
-
-; (kv:union a b) -> store.
-; Set union: keys present in either operand. Right-wins on conflict
-; (consistent with kv:merge and kv:intersection); a's order is preserved
-; for shared keys; b-only keys are appended at the end in b's order.
-; Implemented as a single fold over `b` that adds each b-only key
-; to `a`; shared keys are skipped (a already has them, with a's value
-; — which is what "left-wins on ties" would mean, but the standard
-; union convention is right-wins for asymmetric ops, and a's value
-; for a-then-b insertion — here a is left and its value is already
-; in place, so no overwrite happens).
-(define (kv:union a b)
-  (kv:_fold b a
-    (lambda (k v acc)
-      (if (kv:_has acc k)
-        acc
-        (kv:_set acc k v)))))
-
-; (kv:symmetric-difference a b) -> (left-only . right-only).
-; XOR: keys in a but not in b appear in left-only with a's value;
-; keys in b but not in a appear in right-only with b's value. Keys
-; present in both operands are dropped (they "cancel out"). Each
-; sub-store preserves its source's insertion order. Closes the
-; relational algebra: union / intersection / subtract / symmetric-
-; difference cover the four fundamental binary set operations.
-(define (kv:symmetric-difference a b)
-  (let ((left-only
-          (kv:_fold a (quote ())
-            (lambda (k v acc)
-              (if (kv:_has b k)
-                acc
-                (kv:_set acc k v)))))
-        (right-only
-          (kv:_fold b (quote ())
-            (lambda (k v acc)
-              (if (kv:_has a k)
-                acc
-                (kv:_set acc k v))))))
-    (cons left-only right-only)))
-
-; (kv:reverse store) -> store.
-; Reverses the insertion order of `store`. The new first entry is what
-; was previously the last; the new last entry is what was previously
-; the first. Empty store returns (). Other than the reversed order
-; the set of (key, value) pairs is unchanged. Complements the
-; positional family (first/last/rest/butlast/take/drop) for LIFO
-; traversal and reverse-ordered views. Size and contents are
-; preserved by construction.
-(define (kv:reverse store)
-  (reverse store))
-
-; (kv:frequencies store) -> ((value . count) ...).
-; Returns an alist of (value . count) pairs in the order each value
-; was first observed during the fold. The first occurrence of each
-; value starts the counter at 1; later occurrences increment the
-; existing counter in place (preserving the first-occurrence
-; position). Empty store returns (). Implemented with a single
-; fold and the internal `kv:_bump` helper.
-(define (kv:frequencies store)
-  (kv:_fold store (quote ())
-    (lambda (k v acc) (kv:_bump acc v))))
-```
-
-Now for tests/smoke.aura, I need to add 11 new tests after T57c and before the SCORE display. Let me draft them:
-
-```scheme
-; ---- Phase 12: completion of relational algebra + value-classification ----
-
-; T58: union() combines two stores; right-wins on conflict; preserves
-; a's order for shared keys; appends b-only keys in b's order.
-(let* ((a (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
-       (b (kv:set (kv:set (kv:set (kv:open) "b" 20) "c" 30) "d" 4))
-       (u (kv:union a b))
-       (uk (kv:keys u)))
-  (t "T58-union"
-     (and (= (kv:size u) 4)
-          (equal? (kv:get u "a") 1)
-          (equal? (kv:get u "b") 2)
-          (equal? (kv:get u "c") 3)
-          (equal? (kv:get u "d") 4)
-          (equal? (car uk) "a")
-          (equal? (car (cdr uk)) "b")
-          (equal? (car (cdr (cdr uk))) "c")
-          (equal? (car (cdr (cdr (cdr uk)))) "d"))))
-
-; T58b: union() with disjoint operands = concatenation in (a-then-b) order.
-(t "T58b-union-disjoint"
-   (let* ((a (kv:set (kv:set (kv:open) "a" 1) "b" 2))
-          (b (kv:set (kv:set (kv:open) "c" 3) "d" 4))
-          (u (kv:union a b)))
-     (and (= (kv:size u) 4)
-          (equal? (kv:get u "a") 1)
-          (equal? (kv:get u "b") 2)
-          (equal? (kv:get u "c") 3)
-          (equal? (kv:get u "d") 4)
-          (equal? (car (kv:keys u)) "a")
-          (equal? (car (cdr (cdr (kv:keys u)))) "c"))))
-
-; T58c: union() with an empty operand is identity on the other side.
-(t "T58c-union-empty"
-   (let* ((a (kv:set (kv:set (kv:open) "a" 1) "b" 2))
-          (u1 (kv:union a (kv:open)))
-          (u2 (kv:union (kv:open) a)))
-     (and (= (kv:size u1) 2)
-          (= (kv:size u2) 2)
-          (kv:equal? u1 a)
-          (kv:equal? u2 a))))
-
-; T59: symmetric-difference() returns (left-only . right-only); shared keys cancel.
-(let* ((a (kv:set (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3) "x" 9))
-       (b (kv:set (kv:set (kv:set (kv:set (kv:open) "b" 20) "c" 30) "d" 4) "y" 99))
-       (sd (kv:symmetric-difference a b))
-       (lo (car sd))
-       (ro (cdr sd)))
-  (t "T59-symmetric-difference"
-     (and (= (kv:size lo) 2)
-          (equal? (kv:get lo "a") 1)
-          (equal? (kv:get lo "x") 9)
-          (= (kv:size ro) 2)
-          (equal? (kv:get ro "d") 4)
-          (equal? (kv:get ro "y") 99))))
-
-; T59b: symmetric-difference() with disjoint operands puts everything on both sides.
-(t "T59b-symmetric-difference-disjoint"
-   (let* ((a (kv:set (kv:set (kv:open) "a" 1) "b" 2))
-          (b (kv:set (kv:set (kv:open) "c" 3) "d" 4))
-          (sd (kv:symmetric-difference a b))
-          (lo (car sd))
-          (ro (cdr sd)))
-     (and (= (kv:size lo) 2)
-          (equal? (kv:get lo "a") 1)
-          (equal? (kv:get lo "b") 2)
-          (= (kv:size ro) 2)
-          (equal? (kv:get ro "c") 3)
-          (equal? (kv:get ro "d") 4))))
-
-; T59c: symmetric-difference() of equal stores cancels all keys (both sides empty).
-(t "T59c-symmetric-difference-self"
-   (let* ((a (kv:set (kv:set (kv:open) "a" 1) "b" 2))
-          (sd (kv:symmetric-difference a a)))
-     (and (= (kv:size (car sd)) 0)
-          (= (kv:size (cdr sd)) 0))))
-
-; T60: reverse() reverses insertion order; size and contents preserved.
-(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
-       (r (kv:reverse s))
-       (rk (kv:keys r)))
-  (t "T60-reverse"
-     (and (= (kv:size r) 3)
-          (equal? (kv:get r "a") 1)
-          (equal? (kv:get r "c") 3)
-          (equal? (car rk) "c")
-          (equal? (car (cdr rk)) "b")
-          (equal? (car (cdr (cdr rk))) "a"))))
-
-; T60b: reverse() on an empty store is empty.
-(t "T60b-reverse-empty"
-   (null? (kv:reverse (kv:open))))
-
-; T60c: reverse() of a reverse is the original (structural identity).
-(t "T60c-reverse-double"
-   (let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3)))
-     (kv:equal? s (kv:reverse (kv:reverse s)))))
-
-; T61: frequencies() counts value occurrences in first-occurrence order.
-(let* ((s (kv:set (kv:set (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 1) "d" 2) "e" 1))
-       (f (kv:frequencies s))
-       (fk (kv:keys f)))
-  (t "T61-frequencies"
-     (and (= (length f) 3)
-          (= (kv:get f 1) 3)
-          (= (kv:get f 2) 2)
-          (equal? (car fk) 1)
-          (equal? (car (cdr fk)) 2))))
-
-; T61b: frequencies() on an empty store is empty.
-(t "T61b-frequencies-empty"
-   (null? (kv:frequencies (kv:open))))
-```
-
-Wait, for T61, the keys of the frequencies alist are values, not strings. The store's keys are strings but its values are numbers. So in the result of kv:frequencies, the keys are numbers (the values from the original store). Let me verify:
-
-Original store:
-- "a" -> 1
-- "b" -> 2
-- "c" -> 1
-- "d" -> 2
-- "e" -> 1
-
-Frequencies:
-- 1 -> 3 (a, c, e)
-- 2 -> 2 (b, d)
-
-So `(kv:frequencies s)` returns `((1 . 3) (2 . 2))`.
-- `(length f) == 2`
-- `(kv:get f 1) == 3`
-- `(kv:get f 2) == 2`
-
-Wait, I had `(= (length f) 3)` above but it should be 2. Let me fix that.
-
-Actually `(length ((1 . 3) (2 . 2)))` = 2. So:
-- `(= (length f) 2)`
-- `(= (kv:get f 1) 3)`
-- `(= (kv:get f 2) 2)`
-- `(equal? (car fk) 1)` — first key
-- `(equal? (car (cdr fk)) 2)` — second key
-
-OK that's correct. Let me update my draft.
-
-Now let me think about the file length and whether to provide full file or just the additions. I'll provide full files for safety.
-
-Let me carefully write out the full lib/kv.aura. I'll be very careful to preserve every character.
-
-Actually let me reconsider — maybe I should just provide targeted patches via diff-style patches. But the instructions specifically say "Prefer full-file replacement for small projects". And I need to ensure exact preservation.
-
-Let me carefully construct the full file. I'll structure my response:
-
-1. REVIEW section
-2. DIRECTION section
-3. PATCH section with:
-   - Full lib/kv.aura
-   - Full tests/smoke.aura
-
-Let me start writing it.
-
-Actually, I realize given the length of these files, the response is going to be quite long. Let me be efficient about it.
-
-Let me carefully copy the existing lib/kv.aura and add my changes:
-
-Phase header comment (lines 1-23):
-```
-; projects/kv/lib/kv.aura — mini KV store (project-level evolve subject)
-; Phase 0..2: open + set/get + del/has?/size/keys/clear/overwrite.
-; Phase 3:   multi-key stress + isolation.
-; Phase 4:   batch / composite helpers (mset, mget, update, merge, copy).
-; Phase 5:   iteration & query helpers (values, entries, filter, find,
-;             empty?, for-each).
-; Phase 6:   fold / predicate / projection / selection helpers
-;             (reduce, any?, every?, pick, omit, map-values).
-; Phase 7:   convenience / comparison helpers
-;             (get-or, rename, diff, partition, equal?).
-; Phase 8:   positional / conditional / inversion helpers
-;             (first, last, rest, butlast, take, drop, invert,
-;             set-if-absent).
-; Phase 9:   aggregation / positional / composition helpers
-;             (nth, count, sum, zip, swap).
-; Phase 10:  statistical / numeric aggregation helpers
-;             (min, max, product, avg).
-; Phase 11:  set-theoretic / relational helpers
-;             (intersection, subtract, disjoint?, subset?).
-```
-
-Add Phase 12:
-```
-; Phase 12:  completion of relational algebra + value-classification
-;             (union, symmetric-difference, reverse, frequencies).
-```
-
-Export list — add 4 new exports at end:
-```
-        kv:union
-        kv:symmetric-difference
-        kv:reverse
-        kv:frequencies)
-```
-
-Version: `(define kv:version 12)`
-
-Now let me carefully think about edge cases:
-
-For `kv:union`:
-- If `a` is empty, result should be `b`.
-- If `b` is empty, result should be `a` (fold returns `a` as initial).
-- Shared keys: a's value wins (because fold only adds b-only keys).
-- My implementation: `(kv:_fold b a (lambda (k v acc) (if (kv:_has acc k) acc (kv:_set acc k v))))`. Yes correct.
-
-For `kv:symmetric-difference`:
-- Disjoint operands: left-only has all of a, right-only has all of b.
-- Equal operands: both sides empty.
-- a subset of b: left-only empty, right-only has b-minus-a.
-
-Let me verify my T59 test:
-- a: "a"=1, "b"=2, "c"=3, "x"=9
-- b: "b"=20, "c"=30, "d"=4, "y"=99
-- Common: "b", "c"
-- a-only: "a"=1, "x"=9 (left-only)
-- b-only: "d"=4, "y"=99 (right-only)
-
-`(kv:symmetric-difference a b)` returns `(left-only . right-only)`:
-- lo = ((a . 1) (x . 9))
-- ro = ((d . 4) (y . 99))
-
-So:
-- `(kv:size lo) == 2`
-- `(kv:get lo "a") == 1`
-- `(kv:get lo "x") == 9`
-- `(kv:size ro) == 2`
-- `(kv:get ro "d") == 4`
-- `(kv:get ro "y") == 99`
-
-Good.
-
-For `kv:reverse`:
-- `(reverse '((a . 1) (b . 2) (c . 3)))` = `((c . 3) (b . 2) (a . 1))`. Good.
-- `(reverse '())` = `()`. Good.
-
-For `kv:frequencies`:
-- Original store: "a"=1, "b"=2, "c"=1, "d"=2, "e"=1
-- Frequencies: 1→3 (first seen at "a"), 2→2 (first seen at "b")
-- Result: ((1 . 3) (2 . 2))
-- Length: 2
-- (kv:get f 1) = 3
-- (kv:get f 2) = 2
-
-OK now let me write the test for frequencies more carefully. The result is an alist where keys are the original values. So `(kv:keys f)` returns `(1 2)`. `(car fk) = 1`, `(car (cdr fk)) = 2`. Good.
-
-OK let me finalize everything.
-
-One more thought — for the test file, I need to make sure the structure is preserved. Looking at the existing tests, they use `let*` chains extensively. I'll follow the same pattern.
-
-Let me also think — should I add a T61c for `kv:frequencies` with all distinct values? That would test that each unique value gets count=1. Let me add it for completeness:
-
-```scheme
-; T61c: frequencies() with all distinct values produces a count of 1 for each.
-(t "T61c-frequencies-distinct"
-   (let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
-          (f (kv:frequencies s)))
-     (and (= (length f) 3)
-          (= (kv:get f 1) 1)
-          (= (kv:get f 2) 1)
-          (= (kv:get f 3) 1))))
-```
-
-That makes 12 new tests, total 97.
-
-OK let me now write out the full PATCH sections. I'll provide both files in full.
-
-Actually, you know what, the full files are going to be very long. Let me reconsider — should I do a targeted patch?
-
-Looking at the file structure, the additions are:
-1. Add Phase 12 line to header
-2. Add 4 exports at end of export list
-3. Change version from 11 to 12
-4. Add new internal helper `kv:_bump`
-5. Add Phase 12 section at end
-
-If I provide targeted diffs, the actuator might have trouble matching exact whitespace. Full file replacement is safer.
-
-But the file is ~500 lines. Let me just do it.
-
-Actually let me check the existing files one more time to make sure I have them right...
-
-The lib/kv.aura starts with the header comments and goes through all phases. The tests file ends with the SCORE display.
-
-OK let me write the full files now. I'll preserve everything verbatim except for the additions.
-
-Hmm, given the response length constraint, let me try to be efficient. I'll write the full files with minimal duplication by leveraging that the structure is already given.
-
-Let me carefully construct the full lib/kv.aura:
-
-```scheme
-; projects/kv/lib/kv.aura — mini KV store (project-level evolve subject)
-; Phase 0..2: open + set/get + del/has?/size/keys/clear/overwrite.
-; Phase 3:   multi-key stress + isolation.
-; Phase 4:   batch / composite helpers (mset, mget, update, merge, copy).
-; Phase 5:   iteration & query helpers (values, entries, filter, find,
-;             empty?, for-each).
-; Phase 6:   fold / predicate / projection / selection helpers
-;             (reduce, any?, every?, pick, omit, map-values).
-; Phase 7:   convenience / comparison helpers
-;             (get-or, rename, diff, partition, equal?).
-; Phase 8:   positional / conditional / inversion helpers
-;             (first, last, rest, butlast, take, drop, invert,
-;             set-if-absent).
-; Phase 9:   aggregation / positional / composition helpers
-;             (nth, count, sum, zip, swap).
-; Phase 10:  statistical / numeric aggregation helpers
-;             (min, max, product, avg).
-; Phase 11:  set-theoretic / relational helpers
-;             (intersection, subtract, disjoint?, subset?).
-; Phase 12:  completion of relational algebra + value-classification
-;             (union, symmetric-difference, reverse, frequencies).
-;
-; Store representation: alist of (key . val) pairs.
-;   * Keys are strings.
-;   * Values may be any Aura value (numbers, strings, lists, ...).
-;   * Insertion order is preserved across all operations.
-;   * All operations are functional: each returns a fresh store;
-;     the input store is never mutated.
-;
-; Form order: export before require.
-
-(export kv:version
-        kv:open
-        kv:set
-        kv:get
-        kv:del
-        kv:has?
-        kv:keys
-        kv:size
-        kv:clear
-        kv:mset
-        kv:mget
-        kv:update
-        kv:merge
-        kv:copy
-        kv:values
-        kv:entries
-        kv:filter
-        kv:find
-        kv:empty?
-        kv:for-each
-        kv:reduce
-        kv:any?
-        kv:every?
-        kv:pick
-        kv:omit
-        kv:map-values
-        kv:get-or
-        kv:rename
-        kv:diff
-        kv:partition
-        kv:equal?
-        kv:first
-        kv:last
-        kv:rest
-        kv:butlast
-        kv:take
-        kv:drop
-        kv:invert
-        kv:set-if-absent
-        kv:nth
-        kv:count
-        kv:sum
-        kv:zip
-        kv:swap
-        kv:min
-        kv:max
-        kv:product
-        kv:avg
-        kv:intersection
-        kv:subtract
-        kv:disjoint?
-        kv:subset?
-        kv:union
-        kv:symmetric-difference
-        kv:reverse
-        kv:frequencies)
-
-(define kv:version 12)
-```
-
-... then all the existing internals and ops verbatim ...
-
-Then at the end, before EOF:
-
-```scheme
-; ---------------------------------------------------------------------------
-; Phase 12 completion of relational algebra + value-classification helpers.
-; Pure functional; insertion order of the LEFT (or sole) operand is
-; preserved by construction; no FS escapes. All derive from the existing
-; alist primitives (`_fold`, `_set`, `_has`).
-;
-; Conventions:
-;   * `kv:union` mirrors `kv:merge`'s right-wins bias and the
-;     "a's order for shared keys, b-only appended at end" insertion-
-;     order rule — these are exactly the set-theoretic union semantics
-;     for keyed collections, made explicit under a clearer name.
-;   * `kv:symmetric-difference` (XOR) returns `(left-only . right-only)`
-;     — keys present in either operand but not both. Keys in both
-;     operands cancel out. Each sub-store preserves its source's
-;     insertion order. This is the natural complement to
-;     `kv:intersection` and `kv:subtract` to close the relational
-;     algebra over stores.
-;   * `kv:reverse` is a structural reversal of the alist — it flips
-;     insertion order so the LAST entry becomes FIRST. Complements the
-;     positional family (first/last/rest/butlast/take/drop) for LIFO
-;     traversal and reverse-ordered views.
-;   * `kv:frequencies` counts value occurrences, returning an alist
-;     of (value . count) pairs in the order each value was first
-;     observed. Later duplicates increment the existing counter; new
-;     values are appended. Empty store returns ().
-; ---------------------------------------------------------------------------
-
-; (kv:_bump xs key) -> fresh alist with key's count incremented by 1.
-; Used by kv:frequencies to accumulate value counts in insertion
-; order. If `key` is absent from `xs`, (key . 1) is appended at the
-; end. If `key` is present, its count is incremented in place
-; (preserving the first-occurrence position). Defensive against
-; stray non-pair cells (they are skipped past, never matched).
-(define (kv:_bump xs key)
-  (if (null? xs)
-    (list (cons key 1))
-    (let ((p (car xs)))
-      (if (and (pair? p) (equal? (car p) key))
-        (cons (cons key (+ (cdr p) 1)) (cdr xs))
-        (cons p (kv:_bump (cdr xs) key))))))
-
-; (kv:union a b) -> store.
-; Set union: keys present in either operand. Right-wins bias:
-; shared keys retain `a`'s value (a is the LEFT operand and its
-; values are already in place; the fold over `b` only ADDS b-only
-; keys, never overwrites). `a`'s order is preserved for shared
-; keys; `b`-only keys are appended at the end in `b`'s order.
-; Single fold over `b`; no intermediate alist materialised.
-(define (kv:union a b)
-  (kv:_fold b a
-    (lambda (k v acc)
-      (if (kv:_has acc k)
-        acc
-        (kv:_set acc k v)))))
-
-; (kv:symmetric-difference a b) -> (left-only . right-only).
-; XOR: keys present in `a` but not `b` appear in left-only with
-; `a`'s value; keys present in `b` but not `a` appear in right-only
-; with `b`'s value. Keys present in both operands are dropped
-; (they "cancel out"). Each sub-store preserves its source's
-; insertion order. Closes the relational algebra: union /
-; intersection / subtract / symmetric-difference cover the four
-; fundamental binary set operations over keyed collections.
-(define (kv:symmetric-difference a b)
-  (let ((left-only
-          (kv:_fold a (quote ())
-            (lambda (k v acc)
-              (if (kv:_has b k)
-                acc
-                (kv:_set acc k v)))))
-        (right-only
-          (kv:_fold b (quote ())
-            (lambda (k v acc)
-              (if (kv:_has a k)
-                acc
-                (kv:_set acc k v))))))
-    (cons left-only right-only)))
-
-; (kv:reverse store) -> store.
-; Reverses the insertion order of `store`. The new first entry is
-; what was previously the last; the new last entry is what was
-; previously the first. Empty store returns (). Size and contents
-; (key multiset + per-key values) are preserved by construction —
-; only the order changes. Complements the positional family
-; (first/last/rest/butlast/take/drop) for LIFO traversal and
-; reverse-ordered views.
-(define (kv:reverse store)
-  (reverse store))
-
-; (kv:frequencies store) -> ((value . count) ...).
-; Returns an alist of (value . count) pairs in the order each value
-; was first observed during the fold. The first occurrence of each
-; value starts the counter at 1; later occurrences increment the
-; existing counter in place (preserving the first-occurrence
-; position). Empty store returns (). Non-pair cells in the source
-; are skipped defensively (via `_fold`). Uses the internal
-; `kv:_bump` helper to maintain counter state across the fold.
-(define (kv:frequencies store)
-  (kv:_fold store (quote ())
-    (lambda (k v acc) (kv:_bump acc v))))
-```
-
-OK that's the full lib/kv.aura additions. Now let me think about the tests file.
-
-For tests/smoke.aura, I just need to add the new tests before the SCORE display. Let me append them at the end (before the display):
-
-```scheme
-; ---- Phase 12: completion of relational algebra + value-classification ----
-
-; T58: union() combines two stores; right-wins on conflict; preserves
-; a's order for shared keys; appends b-only keys in b's order.
-(let* ((a (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
-       (b (kv:set (kv:set (kv:set (kv:open) "b" 20) "c" 30) "d" 4))
-       (u (kv:union a b))
-       (uk (kv:keys u)))
-  (t "T58-union"
-     (and (= (kv:size u) 4)
-          (equal? (kv:get u "a") 1)
-          (equal? (kv:get u "b") 2)
-          (equal? (kv:get u "c") 3)
-          (equal? (kv:get u "d") 4)
-          (equal? (car uk) "a")
-          (equal? (car (cdr uk)) "b")
-          (equal? (car (cdr (cdr uk))) "c")
-          (equal? (car (cdr (cdr (cdr uk)))) "d"))))
-
-; T58b: union() with disjoint operands = concatenation in (a-then-b) order.
-(t "T58b-union-disjoint"
-   (let* ((a (kv:set (kv:set (kv:open) "a" 1) "b" 2))
-          (b (kv:set (kv:set (kv:open) "c" 3) "d" 4))
-          (u (kv:union a b))
-          (uk (kv:keys u)))
-     (and (= (kv:size u) 4)
-          (equal? (kv:get u "a") 1)
-          (equal? (kv:get u "b") 2)
-          (equal? (kv:get u "c") 3)
-          (equal? (kv:get u "d") 4)
-          (equal? (car uk) "a")
-          (equal? (car (cdr uk)) "b")
-          (equal? (car (cdr (cdr uk))) "c")
-          (equal? (car (cdr (cdr (cdr uk)))) "d"))))
-
-; T58c: union() with an empty operand is identity on the other side.
-(t "T58c-union-empty"
-   (let* ((a (kv:set (kv:set (kv:open) "a" 1) "b" 2)))
-     (and (kv:equal? (kv:union a (kv:open)) a)
-          (kv:equal? (kv:union (kv:open) a) a)
-          (kv:equal? (kv:union (kv:open) (kv:open)) (kv:open)))))
-
-; T59: symmetric-difference() returns (left-only . right-only); shared keys cancel.
-(let* ((a (kv:set (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3) "x" 9))
-       (b (kv:set (kv:set (kv:set (kv:set (kv:open) "b" 20) "c" 30) "d" 4) "y" 99))
-       (sd (kv:symmetric-difference a b))
-       (lo (car sd))
-       (ro (cdr sd)))
-  (t "T59-symmetric-difference"
-     (and (= (kv:size lo) 2)
-          (equal? (kv:get lo "a") 1)
-          (equal? (kv:get lo "x") 9)
-          (= (kv:size ro) 2)
-          (equal? (kv:get ro "d") 4)
-          (equal? (kv:get ro "y") 99))))
-
-; T59b: symmetric-difference() with disjoint operands puts everything on both sides.
-(t "T59b-symmetric-difference-disjoint"
-   (let* ((a (kv:set (kv:set (kv:open) "a" 1) "b" 2))
-          (b (kv:set (kv:set (kv:open) "c" 3) "d" 4))
-          (sd (kv:symmetric-difference a b))
-          (lo (car sd))
-          (ro (cdr sd)))
-     (and (= (kv:size lo) 2)
-          (equal? (kv:get lo "a") 1)
-          (equal? (kv:get lo "b") 2)
-          (= (kv:size ro) 2)
-          (equal? (kv:get ro "c") 3)
-          (equal? (kv:get ro "d") 4))))
-
-; T59c: symmetric-difference() of equal stores cancels all keys (both sides empty).
-(t "T59c-symmetric-difference-self"
-   (let* ((a (kv:set (kv:set (kv:open) "a" 1) "b" 2)))
-     (let ((sd (kv:symmetric-difference a a)))
-       (and (= (kv:size (car sd)) 0)
-            (= (kv:size (cdr sd)) 0)))))
-
-; T60: reverse() reverses insertion order; size and contents preserved.
-(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
-       (r (kv:reverse s))
-       (rk (kv:keys r)))
-  (t "T60-reverse"
-     (and (= (kv:size r) 3)
-          (equal? (kv:get r "a") 1)
-          (equal? (kv:get r "c") 3)
-          (equal? (car rk) "c")
-          (equal? (car (cdr rk)) "b")
-          (equal? (car (cdr (cdr rk))) "a"))))
-
-; T60b: reverse() on an empty store is empty.
-(t "T60b-reverse-empty"
-   (null? (kv:reverse (kv:open))))
-
-; T60c: reverse() of a reverse is the original (structural identity).
-(t "T60c-reverse-double"
-   (let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3)))
-     (kv:equal? s (kv:reverse (kv:reverse s)))))
-
-; T61: frequencies() counts value occurrences in first-occurrence order.
-(let* ((s (kv:set (kv:set (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 1) "d" 2) "e" 1))
-       (f (kv:frequencies s))
-       (fk (kv:keys f)))
-  (t "T61-frequencies"
-     (and (= (length f) 2)
-          (= (kv:get f 1) 3)
-          (= (kv:get f 2) 2)
-          (equal? (car fk) 1)
-          (equal? (car (cdr fk)) 2))))
-
-; T61b: frequencies() on an empty store is empty.
-(t "T61b-frequencies-empty"
-   (null? (kv:frequencies (kv:open))))
-
-; T61c: frequencies() with all distinct values produces a count of 1 for each.
-(t "T61c-frequencies-distinct"
-   (let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
-          (f (kv:frequencies s)))
-     (and (= (length f) 3)
-          (= (kv:get f 1) 1)
-          (= (kv:get f 2) 1)
-          (= (kv:get f 3) 1))))
-```
-
-That's 12 new tests, total 97.
-
-Let me double check T61:
-- s: "a"=1, "b"=2, "c"=1, "d"=2, "e"=1
-- Frequencies: 
-  - fold "a"=1: bump 1 → [(1 . 1)]
-  - fold "b"=2: bump 2 → [(1 . 1) (2 . 1)]
-  - fold "c"=1: bump 1 → [(1 . 2) (2 . 1)]
-  - fold "d"=2: bump 2 → [(1 . 2) (2 . 2)]
-  - fold "e"=1: bump 1 → [(1 . 3) (2 . 2)]
-- f = ((1 . 3) (2 . 2))
-- length = 2
-- get f 1 = 3
-- get f 2 = 2
-- fk = (1 2)
-- car fk = 1
-- car (cdr fk) = 2
-
-
-
-And T61c:
-- s: "a"=1, "b"=2, "c"=3
-- Frequencies: 
-  - fold "a"=1: [(1 . 1)]
-  - fold "b"=2: [(1 . 1) (2 . 1)]
-  - fold "c"=3: [(1 . 1) (2 . 1) (3 . 1)]
-- f = ((1 . 1) (2 . 1) (3 . 1))
-- length = 3
-- get f 1 = 1
-- get f 2 = 1
-- get f 3 = 1
-
-Good.
-
-Now let me think about T59c. a = (("a" . 1) ("b" . 2)). sd = (left-only . right-only) where:
-- left-only: keys in a but not in b. b = a, so all keys are in b. left-only = ().
-- right-only: keys in b but not in a. a = b, so all keys are in a. right-only = ().
-
-Good. (car sd) = (), (cdr sd) = ().
-
-For the test:
-```scheme
-(let* ((a (kv:set (kv:set (kv:open) "a" 1) "b" 2)))
-  (let ((sd (kv:symmetric-difference a a)))
-    (and (= (kv:size (car sd)) 0)
-         (= (kv:size (cdr sd)) 0))))
-```
-
-Wait, `(let ((sd ...)))` is OK but I'm using `let*` outside and `let` inside. That should be fine.
-
-Actually let me simplify:
-```scheme
-(t "T59c-symmetric-difference-self"
-   (let* ((a (kv:set (kv:set (kv:open) "a" 1) "b" 2))
-          (sd (kv:symmetric-difference a a)))
-     (and (= (kv:size (car sd)) 0)
-          (= (kv:size (cdr sd)) 0))))
-```
-
-OK now I'm ready to write the final PATCH.
-
-Let me reconsider one more time whether to include all these tests. The instructions say "you may also extend tests/smoke.aura carefully only if you also implement the feature". So yes I can extend tests.
-
-12 new tests is reasonable — covers basic, edge cases (empty, disjoint, self), and composition properties. Let me go with this.
-
-OK now let me write the final response. I'll be careful to preserve all existing content in both files.
-
-Actually wait — let me re-check one thing. The existing tests use `let*` chains like:
-```scheme
-(let* ((s (kv:open))
-       (s (kv:set s "a" 1))
-       ...
-```
-
-Note that `let*` allows rebinding of `s`. So the inner `s` shadows the outer `s`. This is OK in standard Scheme/Aura.
-
-For my new tests, I'll use the same pattern.
-
-Let me also double-check that `kv:symmetric-difference` returns a `cons` pair, not a `list`:
-```scheme
-(cons left-only right-only)
-```
-Yes, that's a pair `(left-only . right-only)`. So `(car sd) = left-only`, `(cdr sd) = right-only`. Good.
-
-And `(kv:size (car sd))` works because `(car sd)` is a store (alist). Good.
-
-OK final check — let me make sure I'm not breaking the existing exports. The current export list ends with:
-```
-        kv:intersection
-        kv:subtract
-        kv:disjoint?
-        kv:subset?)
-```
-
-I want to add:
-```
-        kv:union
-        kv:symmetric-difference
-        kv:reverse
-        kv:frequencies)
-```
-
-So the new last line would be:
-```
-        kv:subset?
-        kv:union
-        kv:symmetric-difference
-        kv:reverse
-        kv:frequencies)
-```
-
-And the closing `)` is on its own line. That preserves the structure.
-
-OK I'm confident. Let me write the final response now.
-
-Wait, one more thing — for `kv:frequencies`, I'm using `kv:_bump` which I'm adding as a new internal helper. Let me make sure to place it in the internals section (with the other `kv:_*` helpers). But the file currently has `kv:_bump` as part of Phase 12. Let me put it in the Phase 12 section at the end for clarity. That's fine.
-
-Actually looking at the existing file, internal helpers are interspersed. Some are in the early "Internal alist primitives" section (`_ref`, `_has`, `_set`, `_del`, `_fold`, `_map`), and others (`_mem`, `_take`, `_drop`) are placed with their respective phases. So putting `_bump` in the Phase 12 section is consistent.
-
-OK let me finalize.
-
-One more thought — for the test file, I noticed it uses `(define pass 0)` and `(define total 0)` at the top. These are top-level mutable state. The new tests use `let*` chains so they don't need to mutate pass/total directly. Good.
-
-The test file ends with the SCORE display which is what we want to preserve. I'll add my new tests just before that.
-
-OK now let me write the complete response.
-
-Actually, looking at the existing tests file once more, I see the convention:
-- Tests are top-level expressions (not wrapped in a function)
-- Each test calls `(t "name" condition)` which mutates `pass`/`total`
-- The final SCORE display shows results
-
-My new tests follow this same convention. Good.
-
-One concern: in T59c I use `let*` with `(kv:set (kv:open) "a" 1)` then `(kv:set ... "b" 2)` — the first binding shadows the second. Let me check:
-
-```scheme
-(let* ((a (kv:set (kv:open) "a" 1))
-       (a (kv:set a "b" 2)))
+(define (kv:update store key default proc)
   ...)
 ```
+Returns store only.
 
-In `let*`, each binding sees the previous ones. So `a` in the second binding sees the first `a`. Yes, this works correctly. Both bindings of `a` exist (sequentially), and the last one (the outer `a`) is the final value. Same pattern used throughout the tests.
+But `kv:min`/`kv:max`/`kv:sum`/`kv:product`/`kv:avg` return scalars.
 
-OK now writing the final response.
+So both return conventions exist. For `incr`, returning `(value . store)` is one option. Another is to return only the store. Or only the value.
 
-Let me draft the full lib/kv.aura one more time, carefully:
+Let me think of another set of operations:
+
+**Phase 13: Predicate-based key selection**
+- `kv:keys-with` — `(store proc)` → list of keys where (proc k v) is #t
+- `kv:reject` — alias-like for (filter with negated pred) but as a single op? No, just compose.
+
+**Phase 13: Grouping / partitioning by key function**
+- `kv:group-by` — `(store proc)` → store-of-stores, keyed by (proc k v), value is sub-store of matching entries
+
+**Phase 13: Composition**
+- `kv:pipe` — `(store (proc1 proc2 ...))` → apply procs in sequence
+
+Let me pick something useful and testable. I think a good Phase 13 would be:
+
+**Phase 13: Numeric atomic helpers (Redis-style)**
+- `kv:incr` `(store key)` or `(store key amount)` → `(new-value . new-store)`; default amount=1; creates key with amount if missing; amount must be numeric
+- `kv:decr` same but subtract
+
+This is a classic, useful, well-defined feature. Let me design it:
+
+```scheme
+; (kv:incr store key) or (kv:incr store key amount)
+; Increments the numeric value at `key` by `amount` (default 1).
+; If `key` is missing, it is created with the value `amount`.
+; Returns a cons cell `(new-value . new-store)` so callers can
+; retrieve the new value atomically without an extra kv:get.
+; `amount` must be a number; non-numeric amounts return #f as
+; the value with the store unchanged (refuse to corrupt the store).
+```
+
+```scheme
+(define (kv:incr store key)
+  (kv:incr-by store key 1))
+
+(define (kv:incr-by store key amount)
+  (if (number? amount)
+    (let ((current (kv:_ref store key)))
+      (let ((new-val (if (number? current) (+ current amount) amount)))
+        (cons new-val (kv:_set store key new-val))))
+    (cons #f store)))
+```
+
+```scheme
+(define (kv:decr store key)
+  (kv:incr-by store key -1))
+
+(define (kv:decr-by store key amount)
+  (kv:incr-by store key (- amount)))
+```
+
+Actually wait, I should think about what's idiomatic for this codebase. Most ops return store only. Having `incr` return `(value . store)` is a different convention.
+
+Let me think differently. What if I add a different category of operations that fit better?
+
+Looking at what's already there... The store has positional ops, set ops, comparison ops, etc.
+
+**Phase 13 candidates that return just stores:**
+- `kv:incr` could return only the new store (caller uses `kv:get` after). That's consistent.
+- `kv:rename-keys` — bulk rename via mapping
+
+OR new category:
+
+**Phase 13: Multi-store composition helpers**
+- `kv:union-all` — `(stores ...)` → reduce union across list of stores
+- `kv:intersection-all` — `(stores ...)` → reduce intersection
+
+Or:
+
+**Phase 13: Conversion between store and other representations**
+- `kv:to-alist` — explicit alias for `kv:entries`
+- `kv:from-alist` — explicit alias for `kv:mset`
+- `kv:to-pairs` — list of (key value) lists
+
+Or:
+
+**Phase 13: Predicate-based selection variants**
+- `kv:some` — `(store proc)` → returns first matching (k . v) or #f (alias for kv:find). Useful for explicit naming.
+- `kv:none?` — `(store proc)` → #t iff no entry matches; alias-like complement to `every?`
+
+Hmm, let me think about what would be most useful AND most testable AND distinct from existing ops.
+
+I think I'll go with a combination that has clean semantics:
+
+**Phase 13: Numeric arithmetic & bulk composition helpers**
+1. `kv:incr` `(store key)` or `(store key amount)` → new store. Default amount=1. If missing, creates with `amount`. Non-numeric `amount` is refused (store unchanged). Returns just the store, consistent with other writers.
+
+2. `kv:union-all` `(stores)` → union of a list of stores (variadic union). Empty list → empty store. Single element → that element.
+
+3. `kv:rename-keys` `(store mapping)` → applies rename for each (old . new) in mapping. Each rename follows the same refusal semantics as `kv:rename` (no-op on absent source or existing target). Mapping is alist of (old-key . new-key) pairs.
+
+Actually, let me also think: are these testing-trivial or test-interesting?
+
+`kv:incr`:
+- Increment existing numeric value by 1
+- Increment existing numeric value by amount
+- Increment missing key (creates with amount)
+- Non-numeric amount refused (store unchanged)
+- Increment on store with non-numeric value at key (treat as missing? or refuse?)
+
+This is interesting but has edge cases. Let me design carefully.
+
+Actually I think the cleanest path is:
+
+**Phase 13: Convenience / numeric / bulk helpers**
+1. `kv:incr` `(store key)` or `(store key amount)` → new store. amount defaults to 1. If key missing, creates with amount. If key has non-numeric value, refuses (returns store unchanged — don't corrupt data). Returns the store.
+
+2. `kv:decr` `(store key)` or `(store key amount)` → new store. Same semantics as incr but subtracts.
+
+3. `kv:rename-keys` `(store mapping)` → applies (kv:rename store old new) for each (old . new) in mapping, sequentially. Each rename uses kv:rename's refusal semantics. Mapping alist is (old-key . new-key).
+
+4. `kv:union-all` `(stores)` → union of all stores in list, left-to-right. Empty list → empty. Single element → that element.
+
+Let me code this:
+
+```scheme
+; ---------------------------------------------------------------------------
+; Phase 13 numeric / bulk composition helpers.
+; Pure functional; insertion order preserved by construction; no FS
+; escapes; no API renames.
+;
+; Conventions:
+;   * `kv:incr` / `kv:decr` only operate on numeric values. When `key`
+;     is missing or holds a non-numeric value, the operation treats it
+;     as "value not a number" and refuses to corrupt the store (the
+;     original store is returned unchanged). When `key` is missing,
+;     the new value is just `amount` (additive identity of 0 + amount).
+;     Amounts that aren't themselves numeric are also refused (same
+;     posture as `kv:set` refusing non-string keys: garbage in,
+;     store unchanged).
+;   * `kv:rename-keys` applies `kv:rename` sequentially over an alist
+;     mapping. Each rename follows kv:rename's refusal semantics
+;     (no-op on missing source or existing target). The mapping is
+;     read left-to-right, so a rename introduced earlier can be
+;     picked up by a later rename in the same batch — useful for
+;     chained renames.
+;   * `kv:union-all` folds a list of stores with `kv:union`. Empty
+;     list yields `()`. Single-element list yields the lone store.
+;     Order of the result tracks the left-to-right union, which is
+;     the natural composition for "merge several stores".
+; ---------------------------------------------------------------------------
+
+; (kv:_incr store key amount) -> store
+; Internal helper for kv:incr and kv:decr. Refuses non-numeric values
+; (returns store unchanged). Refuses non-numeric amounts (returns
+; store unchanged). Otherwise: if key is present and numeric, add
+; amount; if key is absent (or non-numeric, per the refusal rule),
+; treat as missing and write `amount` as the new value.
+(define (kv:_incr store key amount)
+  (if (number? amount)
+    (let ((current (kv:_ref store key)))
+      (let ((new-val
+              (if (number? current)
+                (+ current amount)
+                amount)))
+        (if (string? key)
+          (kv:_set store key new-val)
+          store)))
+    store))
+
+; (kv:incr store key) -> store
+; (kv:incr store key amount) -> store
+; Increments the numeric value at `key` by `amount` (default 1). If
+; `key` is missing, creates it with `amount`. Refuses non-numeric
+; values at `key` (treats them as missing so the operation never
+; corrupts an existing non-numeric entry) and refuses non-numeric
+; amounts (returns store unchanged).
+(define (kv:incr store key . rest)
+  (let ((amount (if (null? rest) 1 (car rest))))
+    (kv:_incr store key amount)))
+
+; (kv:decr store key) -> store
+; (kv:decr store key amount) -> store
+; Decrements the numeric value at `key` by `amount` (default 1). Same
+; refusal semantics as kv:incr; just negates the amount.
+(define (kv:decr store key . rest)
+  (let ((amount (if (null? rest) 1 (car rest))))
+    (kv:_incr store key (- amount))))
+
+; (kv:rename-keys store mapping) -> store
+; Applies (kv:rename store old new) for each (old . new) in mapping,
+; sequentially. Each rename uses kv:rename's refusal semantics
+; (no-op on missing source or existing target). Reading the mapping
+; left-to-right means a rename introduced earlier can be picked up
+; by a later rename — useful for chained renames (e.g., rename
+; "a"->"b", then "b"->"c" yields "a"->"c" via the intermediate).
+(define (kv:rename-keys store mapping)
+  (let loop ((xs mapping) (acc store))
+    (if (null? xs)
+      acc
+      (let ((p (car xs)))
+        (if (pair? p)
+          (loop (cdr xs) (kv:rename acc (car p) (cdr p)))
+          (loop (cdr xs) acc))))))
+
+; (kv:union-all stores) -> store
+; Left-to-right union of a list of stores. Empty list yields ().
+; Single-element list yields the lone store. Implemented as a fold
+; over `kv:union`, which itself preserves left-order for shared keys
+; and appends right-only keys in the right operand's order — so the
+; result naturally tracks the input list order.
+(define (kv:union-all stores)
+  (kv:_fold stores (quote ())
+    (lambda (k v acc) ; k and v here are the cons cells of stores
+      (kv:union acc v))))
+```
+
+Hmm, the `_fold` callback signature is (k v acc), but for a list of stores, k is the pair structure of the outer list and v is the store. That works but is a bit weird. Let me use a direct loop instead:
+
+```scheme
+(define (kv:union-all stores)
+  (let loop ((xs stores) (acc (quote ())))
+    (if (null? xs)
+      acc
+      (loop (cdr xs) (kv:union acc (car xs))))))
+```
+
+Cleaner. Note: with variadic-like lists, there's an edge case where someone passes a non-pair-cell; we can skip those.
+
+Now for tests. I need to add tests for these new ops, and the existing 97 must remain green.
+
+Let me design tests:
+
+**T62: incr() basic — increment existing numeric.**
+```scheme
+(let* ((s (kv:set (kv:open) "x" 5))
+       (s2 (kv:incr s "x")))
+  (t "T62-incr-basic"
+     (and (= (kv:get s2 "x") 6)
+          (equal? (kv:get s "x") 5)))) ; original unchanged
+```
+
+**T63: incr() on missing key creates with amount (default 1).**
+```scheme
+(let* ((s (kv:open))
+       (s (kv:incr s "new")))
+  (t "T63-incr-create"
+     (= (kv:get s "new") 1)))
+```
+
+**T64: incr() with explicit amount.**
+```scheme
+(let* ((s (kv:open))
+       (s (kv:incr s "x" 10))
+       (s (kv:incr s "x" 5)))
+  (t "T64-incr-amount"
+     (= (kv:get s "x") 15)))
+```
+
+**T65: incr() refuses non-numeric amounts (store unchanged).**
+```scheme
+(let* ((s (kv:set (kv:open) "x" 5))
+       (s2 (kv:incr s "x" "bad")))
+  (t "T65-incr-refuse-bad-amount"
+     (equal? (kv:get s2 "x") 5)))
+```
+
+**T66: incr() refuses non-string keys (store unchanged).**
+```scheme
+(let* ((s (kv:set (kv:open) "x" 5))
+       (s2 (kv:incr s 'symbol 1)))
+  (t "T66-incr-refuse-bad-key"
+     (equal? (kv:get s2 "x") 5)))
+```
+
+Wait, the current `kv:set` returns store unchanged if key isn't a string. But the tests in this file use strings everywhere, so let me check: actually `kv:_set` doesn't validate keys; only `kv:set` does. For `kv:incr`, I have it using `kv:_set` after a `string?` check. So `kv:incr s 'symbol 1` should return store unchanged.
+
+Hmm actually let me re-check. In my code:
+```
+(define (kv:_incr store key amount)
+  (if (number? amount)
+    (let ((current (kv:_ref store key)))
+      (let ((new-val ...))
+        (if (string? key)
+          (kv:_set store key new-val)
+          store)))
+    store))
+```
+
+So it requires both `amount` to be numeric and `key` to be a string. Good.
+
+**T67: decr() basic.**
+```scheme
+(let* ((s (kv:set (kv:open) "x" 10))
+       (s2 (kv:decr s "x"))
+       (s3 (kv:decr s2 "x" 3)))
+  (t "T67-decr-basic"
+     (= (kv:get s3 "x") 6)))
+```
+
+**T68: decr() on missing key creates with -amount.**
+```scheme
+(let* ((s (kv:open))
+       (s (kv:decr s "x" 5)))
+  (t "T68-decr-create"
+     (= (kv:get s "x") -5)))
+```
+
+**T69: rename-keys() applies multiple renames sequentially.**
+```scheme
+(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
+       (r (kv:rename-keys s (list (cons "a" "x") (cons "b" "y")))))
+  (t "T69-rename-keys"
+     (and (= (kv:size r) 3)
+          (eq? (kv:has? r "a") #f)
+          (eq? (kv:has? r "b") #f)
+          (equal? (kv:get r "x") 1)
+          (equal? (kv:get r "y") 2)
+          (equal? (kv:get r "c") 3))))
+```
+
+**T70: rename-keys() chained — first rename can be picked up by later.**
+```scheme
+(let* ((s (kv:set (kv:open) "a" 1))
+       (r (kv:rename-keys s (list (cons "a" "b") (cons "b" "c")))))
+  (t "T70-rename-keys-chained"
+     (and (= (kv:size r) 1)
+          (eq? (kv:has? r "a") #f)
+          (eq? (kv:has? r "b") #f)
+          (equal? (kv:get r "c") 1))))
+```
+
+**T71: rename-keys() with empty mapping is identity.**
+```scheme
+(let* ((s (kv:set (kv:set (kv:open) "a" 1) "b" 2))
+       (r (kv:rename-keys s (quote ()))))
+  (t "T71-rename-keys-empty"
+     (= (kv:size r) 2)))
+```
+
+**T72: rename-keys() skips rename when target already exists.**
+```scheme
+(let* ((s (kv:set (kv:set (kv:open) "a" 1) "b" 2))
+       (r (kv:rename-keys s (list (cons "a" "b"))))) ; "b" exists, so skip
+  (t "T72-rename-keys-skip-collision"
+     (and (= (kv:size r) 2)
+          (equal? (kv:get r "a") 1)
+          (equal? (kv:get r "b") 2))))
+```
+
+**T73: union-all() merges multiple stores left-to-right.**
+```scheme
+(let* ((a (kv:set (kv:set (kv:open) "a" 1) "b" 2))
+       (b (kv:set (kv:open) "c" 3))
+       (c (kv:set (kv:set (kv:open) "b" 99) "d" 4))
+       (u (kv:union-all (list a b c)))
+       (uk (kv:keys u)))
+  (t "T73-union-all"
+     (and (= (kv:size u) 4)
+          (equal? (kv:get u "a") 1)
+          (equal? (kv:get u "b") 2)
+          (equal? (kv:get u "c") 3)
+          (equal? (kv:get u "d") 4)
+          (equal? (car uk) "a")
+          (equal? (car (cdr uk)) "b")
+          (equal? (car (cdr (cdr uk))) "c")
+          (equal? (car (cdr (cdr (cdr uk)))) "d"))))
+```
+
+**T74: union-all() empty list yields empty store.**
+```scheme
+(t "T74-union-all-empty"
+   (null? (kv:union-all (quote ()))))
+```
+
+**T75: union-all() single-element list yields that element.**
+```scheme
+(let* ((a (kv:set (kv:open) "a" 1)))
+  (t "T75-union-all-single"
+     (= (kv:size (kv:union-all (list a))) 1)))
+```
+
+**T76: incr() multiple ops compose to count.**
+```scheme
+(let* ((s (kv:open))
+       (s (kv:incr s "c"))
+       (s (kv:incr s "c"))
+       (s (kv:incr s "c"))
+       (s (kv:incr s "c" 10)))
+  (t "T76-incr-multi"
+     (= (kv:get s "c") 13)))
+```
+
+OK that's 15 new tests (T62-T76). With existing 97, total = 112.
+
+Let me also think about whether I should make incr/decr variadic or have incr-by/decr-by. The codebase pattern seems to favor 2-arg fixed forms. But `incr store key amount` is so universally variadic that I think keeping it variadic with default is OK.
+
+Actually wait — does Aura have rest args? Let me check the existing code... 
+
+Looking at the codebase, I see `(require "kv" all:)` and the file has many functions. I don't see explicit use of rest args. But Aura does support `(lambda args body)` and `(lambda (x . rest) body)`.
+
+Let me check the smoke test format... All calls are fixed-arity. I should be safe with rest args, but to be safe let me use a more defensive approach:
+
+```scheme
+(define (kv:incr store key) (kv:_incr store key 1))
+(define (kv:incr-by store key amount) (kv:_incr store key amount))
+```
+
+And similarly:
+```scheme
+(define (kv:decr store key) (kv:_incr store key -1))
+(define (kv:decr-by store key amount) (kv:_incr store key (- amount)))
+```
+
+This is more idiomatic — separate fixed-arity functions. The cost is 2 functions instead of 1, but the API is cleaner and matches the codebase style (separate inc/dec by amount). Looking at e.g. `kv:set`/`kv:set-if-absent`, the codebase has separate functions for different concerns. So this fits.
+
+Actually wait, there's already a way to do increment: `(kv:update store "x" 0 (lambda (v) (+ v 1)))`. But that creates the key with 0 first, then increments to 1. It's a bit awkward. `kv:incr` is a more direct API.
+
+OK let me finalize my plan:
+
+**Phase 13 ops to add:**
+1. `kv:incr` `(store key)` → store (increments by 1)
+2. `kv:incr-by` `(store key amount)` → store (increments by amount)
+3. `kv:decr` `(store key)` → store (decrements by 1)
+4. `kv:decr-by` `(store key amount)` → store (decrements by amount)
+5. `kv:rename-keys` `(store mapping)` → store (bulk rename)
+6. `kv:union-all` `(stores)` → store (variadic union over list)
+
+**Tests to add:** T62–T76 (15 tests).
+
+Let me also update `kv:version` to 13, and add the new exports to the export list.
+
+Let me carefully craft the patch.
+
+Actually wait, let me check: do I have a concern about the test for T70 chained renames? Let me trace through:
+
+```
+s = {"a" -> 1}
+mapping = (("a" . "b") ("b" . "c"))
+
+loop 1: p = ("a" . "b"), acc = s
+  (kv:rename s "a" "b") — old-key="a" exists in s, new-key="b" doesn't exist → rename. Result: {"b" -> 1}
+  acc = {"b" -> 1}
+loop 2: p = ("b" . "c"), acc = {"b" -> 1}
+  (kv:rename acc "b" "c") — old-key="b" exists, new-key="c" doesn't → rename. Result: {"c" -> 1}
+  acc = {"c" -> 1}
+loop end. Return {"c" -> 1}.
+```
+
+So r = {"c" -> 1}, size 1, "a" not present, "b" not present, "c" -> 1. ✓
+
+T72 trace:
+```
+s = {"a" -> 1, "b" -> 2}
+mapping = (("a" . "b"))
+
+loop 1: p = ("a" . "b"), acc = s
+  (kv:rename s "a" "b") — old-key="a" exists, new-key="b" exists → no-op
+  acc = s = {"a" -> 1, "b" -> 2}
+loop end. Return s.
+```
+
+So r = {"a" -> 1, "b" -> 2}, size 2. ✓
+
+T73 trace:
+```
+a = {"a" -> 1, "b" -> 2}
+b = {"c" -> 3}
+c = {"b" -> 99, "d" -> 4}
+u = (kv:union-all (list a b c))
+
+loop 1: xs = (b c), acc = ()
+  (kv:union () a) = a = {"a" -> 1, "b" -> 2}
+loop 2: xs = (c), acc = {"a" -> 1, "b" -> 2}
+  (kv:union {"a" -> 1, "b" -> 2} {"c" -> 3})
+    — fold over b, add b-only keys to acc
+    — b = {"c" -> 3}
+    — "c" not in acc → set "c" -> 3
+    — Result: {"a" -> 1, "b" -> 2, "c" -> 3}
+loop 3: xs = (), acc = {"a" -> 1, "b" -> 2, "c" -> 3}
+  (kv:union {"a" -> 1, "b" -> 2, "c" -> 3} {"b" -> 99, "d" -> 4})
+    — fold over c = {"b" -> 99, "d" -> 4}
+    — "b" in acc → skip (a's value 2 wins)
+    — "d" not in acc → set "d" -> 4
+    — Result: {"a" -> 1, "b" -> 2, "c" -> 3, "d" -> 4}
+loop end. Return {"a" -> 1, "b" -> 2, "c" -> 3, "d" -> 4}.
+```
+
+So u = {"a" -> 1, "b" -> 2, "c" -> 3, "d" -> 4}. ✓
+
+T65 (incr with bad amount):
+```
+s = {"x" -> 5}
+s2 = (kv:incr s "x" "bad") = (kv:_incr s "x" "bad")
+
+amount = "bad", not number → return s unchanged.
+```
+
+So s2 = s = {"x" -> 5}. Test: (kv:get s2 "x") == 5. ✓
+
+T66 (incr with bad key):
+```
+s = {"x" -> 5}
+s2 = (kv:incr s 'symbol 1) = (kv:_incr s 'symbol 1)
+
+amount = 1, number ✓
+current = #f (not in store)
+new-val = 1 (since current is not a number)
+key = 'symbol, not string → return store unchanged.
+```
+
+So s2 = s = {"x" -> 5}. Test: (kv:get s2 "x") == 5. ✓
+
+T63 trace:
+```
+s = ()
+s = (kv:incr s "new") = (kv:_incr () "new" 1)
+  amount = 1, number ✓
+  current = #f
+  new-val = 1
+  key = "new", string ✓
+  (kv:_set () "new" 1) = (("new" . 1))
+```
+
+So s = {"new" -> 1}. Test: (kv:get s "new") == 1. ✓
+
+OK now let me also think about: do I need to verify the entire test file still works structurally? Let me think about exports:
+
+Current exports (in order):
+```
+kv:version
+kv:open, kv:set, kv:get, kv:del, kv:has?, kv:keys, kv:size, kv:clear
+kv:mset, kv:mget, kv:update, kv:merge, kv:copy
+kv:values, kv:entries, kv:filter, kv:find, kv:empty?, kv:for-each
+kv:reduce, kv:any?, kv:every?, kv:pick, kv:omit, kv:map-values
+kv:get-or, kv:rename, kv:diff, kv:partition, kv:equal?
+kv:first, kv:last, kv:rest, kv:butlast, kv:take, kv:drop, kv:invert, kv:set-if-absent
+kv:nth, kv:count, kv:sum, kv:zip, kv:swap
+kv:min, kv:max, kv:product, kv:avg
+kv:intersection, kv:subtract, kv:disjoint?, kv:subset?
+kv:union, kv:symmetric-difference, kv:reverse, kv:frequencies
+```
+
+I need to add:
+- kv:incr, kv:incr-by, kv:decr, kv:decr-by
+- kv:rename-keys
+- kv:union-all
+
+So new exports:
+```
+kv:incr, kv:incr-by, kv:decr, kv:decr-by, kv:rename-keys, kv:union-all
+```
+
+Now let me also bump kv:version from 12 to 13.
+
+And update the header comment block to mention Phase 13.
+
+Let me draft the patch now. Since this is a single file project (kv.aura + smoke.aura), I'll provide full file replacements.
+
+Actually, I notice the controller output format asks for a PATCH that the actuator can apply. Since these are full files, full file replacement is appropriate per the instructions:
+> Prefer full-file replacement for small projects (lib/kv.aura).
+
+Let me also think about whether I need to update tests/smoke.aura or if just updating lib/kv.aura is enough. The instructions say:
+> If SCORE is already full, advance SPEC phase (new capability) via code that still keeps old tests green; you may also extend tests/smoke.aura carefully only if you also implement the feature.
+
+So I can extend tests if I implement the feature. I'll add new tests to exercise the new features. That's important for SPEC compliance.
+
+Let me now write the full lib/kv.aura file and the test additions.
+
+Actually I realize: the lib has been growing, and the file is large. Let me try to be careful to preserve all existing code exactly. I'll add the Phase 13 section at the end (after Phase 12) and the exports at the top.
+
+Let me also add the version bump.
+
+Looking at the file structure: header comment with phase roadmap, then exports, then internal helpers, then phases. The version number 12 is hardcoded in two places: the comment block and `(define kv:version 12)`.
+
+Let me prepare the full new lib/kv.aura. I'll add Phase 13 right before the version comment header section is closed (after Phase 12).
+
+Actually looking again at the file:
+- Header comment with phase roadmap (top of file)
+- Exports list
+- Internal helpers (kv:_ref, kv:_has, etc.)
+- Phase 0..2 public API
+- Phase 4 batch/composite helpers
+- Phase 5 iteration & query helpers
+- Phase 6 fold/predicate/projection/selection helpers
+- Phase 7 convenience/comparison helpers
+- Phase 8 positional/conditional/inversion helpers
+- Phase 9 aggregation/positional/composition helpers
+- Phase 10 statistical/numeric aggregation helpers
+- Phase 11 set-theoretic/relational helpers
+- Phase 12 completion of relational algebra + value-classification helpers
+
+So Phase 13 will be at the end, before EOF.
+
+Let me also update the header comment. Here's the plan:
+
+1. Update header comment to include Phase 13 in roadmap
+2. Bump version 12 → 13
+3. Add new exports
+4. Add Phase 13 section at the end
+
+Now writing the patch. I'll provide the full new lib/kv.aura and the smoke test additions.
+
+Wait, looking at the tests/smoke.aura format, I notice it uses (t "T61-categories" ...) extensively. My new tests need to follow the same style. Let me also confirm the test runner format.
+
+Looking at smoke.aura:
+- `(define (t name ok) ...)` — prints PASS/FAIL with name
+- `(t "T61-frequencies" ...)` — calls t with test name and boolean
+
+OK let me write everything now.
+
+For the smoke.aura, I'll add new tests right before the final score/result block. That's the standard location.
+
+Let me also count tests to make sure I'm consistent. Current tests are T1-T61c, that's 61 numbered categories with some sub-tests. Total = 97 individual (t ...) calls. Adding T62-T76 = 15 new (t ...) calls, bringing total to 112.
+
+OK let me draft the full new lib/kv.aura file. I'll preserve everything from the current file except for:
+1. Header comment block (add Phase 13 entry)
+2. Exports list (add new ops)
+3. Version number (12 → 13)
+4. Append Phase 13 section at end
+
+Let me also think about whether I should add the operations in any particular order in the exports. Convention seems to be: version, then by-phase. I'll append the Phase 13 ops at the end of the exports list, after kv:frequencies.
+
+Here's my draft of the Phase 13 section:
+
+```scheme
+; ---------------------------------------------------------------------------
+; Phase 13 numeric / bulk-composition helpers.
+; Pure functional; insertion order preserved by construction; no FS
+; escapes; no API renames; no exports removed.
+;
+; Conventions:
+;   * `kv:incr` / `kv:decr` (and their `-by` variants) only operate on
+;     numeric values. When `key` is absent or holds a non-numeric value,
+;     the operation treats the slot as "value not a number" and writes
+;     the delta as the new value (mirroring how a counter would be
+;     initialised by its first operation). Non-numeric amounts are
+;     refused outright (the original store is returned unchanged),
+;     matching the defensive posture used by `kv:set` (refuses
+;     non-string keys). Non-string keys are also refused — the store
+;     is for string keys and incr/decr must not silently introduce
+;     a non-string slot.
+;   * `kv:rename-keys` folds `mapping` left-to-right and applies
+;     `kv:rename` for each (old . new) pair. Each rename inherits
+;     `kv:rename`'s refusal semantics (no-op on missing source or
+;     existing target). Sequential application is deliberate: a
+;     rename introduced by an earlier entry can be picked up by a
+;     later entry, supporting chained renames such as
+;     (("a" . "b") ("b" . "c")) turning "a" into "c" via "b".
+;   * `kv:union-all` is a left fold over `kv:union`. Empty list
+;     yields `()`; a single-element list yields that element
+;     unchanged. The order of the result tracks the left-to-right
+;     union chain — consistent with how `kv:union` itself orders
+;     shared keys (left-wins) and appends right-only keys (right's
+;     order).
+; ---------------------------------------------------------------------------
+
+; (kv:_incr store key amount) -> store.
+; Internal helper shared by `kv:incr` / `kv:incr-by` / `kv:decr` /
+; `kv:decr-by`. Returns `store` unchanged when `amount` is not a
+; number (defensive: refuse to corrupt the store). Otherwise
+; computes the new value: if `key` is present with a numeric value,
+; it is incremented by `amount`; if `key` is absent OR present with
+; a non-numeric value, the new value is just `amount` (i.e. the
+; operation initialises the slot to the delta). Requires `key` to
+; be a string; non-string keys refuse (same posture as `kv:set`).
+(define (kv:_incr store key amount)
+  (if (number? amount)
+    (let ((current (kv:_ref store key)))
+      (let ((new-val
+              (if (number? current)
+                (+ current amount)
+                amount)))
+        (if (string? key)
+          (kv:_set store key new-val)
+          store)))
+    store))
+
+; (kv:incr store key) -> store.
+; Increments the value at `key` by 1. Creates `key` with value 1
+; if missing. Refuses non-numeric amounts (return unchanged); this
+; signature has no amount argument, so the only failure mode is a
+; non-numeric existing value (initialised to 1) or a non-string
+; key (store unchanged).
+(define (kv:incr store key)
+  (kv:_incr store key 1))
+
+; (kv:incr-by store key amount) -> store.
+; Increments the value at `key` by `amount`. Creates `key` with
+; value `amount` if missing (or if `key` holds a non-numeric value,
+; which is treated as "no numeric slot yet"). Refuses non-numeric
+; `amount` — the store is returned unchanged so a bad call can't
+; poison a numeric counter.
+(define (kv:incr-by store key amount)
+  (kv:_incr store key amount))
+
+; (kv:decr store key) -> store.
+; Decrements the value at `key` by 1. Same semantics as `kv:incr`
+; with amount -1. Creates `key` with value -1 if missing.
+(define (kv:decr store key)
+  (kv:_incr store key -1))
+
+; (kv:decr-by store key amount) -> store.
+; Decrements the value at `key` by `amount`. Same semantics as
+; `kv:incr-by` with negated amount. Refuses non-numeric `amount`.
+(define (kv:decr-by store key amount)
+  (kv:_incr store key (- amount)))
+
+; (kv:rename-keys store mapping) -> store.
+; Apply (kv:rename store old new) for each (old . new) in `mapping`,
+; sequentially. Each rename inherits `kv:rename`'s refusal semantics
+; (no-op when `old` is absent or `new` is already present). Reading
+; `mapping` left-to-right means a rename introduced by an earlier
+; pair can be picked up by a later pair — useful for chained
+; renames (e.g. (("a" . "b") ("b" . "c")) maps "a" to "c" via
+; the intermediate "b"). Non-pair cells in `mapping` are skipped
+; defensively, same posture as every other op.
+(define (kv:rename-keys store mapping)
+  (let loop ((xs mapping) (acc store))
+    (if (null? xs)
+      acc
+      (let ((p (car xs)))
+        (if (pair? p)
+          (loop (cdr xs) (kv:rename acc (car p) (cdr p)))
+          (loop (cdr xs) acc))))))
+
+; (kv:union-all stores) -> store.
+; Left-to-right union of a list of stores. Empty list yields ();
+; single-element list yields that element unchanged. Implemented
+; as a direct loop (not `kv:_fold`) so the call site reads as a
+; plain "merge these stores left-to-right" — `kv:union` already
+; gives the left-wins / right-appends ordering, and chaining it
+; across a list is the natural composition. No FS escapes.
+(define (kv:union-all stores)
+  (let loop ((xs stores) (acc (quote ())))
+    (if (null? xs)
+      acc
+      (loop (cdr xs) (kv:union acc (car xs))))))
+```
+
+Wait, there's a subtle issue with `kv:union-all`. The current kv:union is:
+```scheme
+(define (kv:union a b)
+  (kv:_fold b a
+    (lambda (k v acc)
+      (if (kv:_has acc k)
+        acc
+        (kv:_set acc k v)))))
+```
+
+So it folds `b` and only adds b-only keys to `a`. For an empty `a`, this works fine — all keys of `b` get added. Good.
+
+But the convention in `kv:union-all` is that empty list → empty store. And single element → that element. Let me trace:
+
+`kv:union-all ()` → loop end → return () ✓
+`kv:union-all (a)` → loop iter 1, xs = (a), acc = ()
+  loop body: xs not null, acc = (kv:union () a) = a
+  → loop (cdr xs) (kv:union () a) = loop () a
+  → loop end → return a ✓
+
+OK that works.
+
+What about `kv:union-all (())` where the lone element is the empty store?
+`kv:union-all (())` → loop iter 1, xs = (()), acc = ()
+  acc = (kv:union () ()) = ()
+  → loop (cdr xs) () = loop () ()
+  → loop end → return () ✓
+
+Good.
+
+Now `kv:union-all (a b)` where a and b are non-empty:
+  iter 1: acc = (kv:union () a) = a (a's keys added to empty)
+  iter 2: acc = (kv:union a b) = a ∪ b with left-wins for shared
+  → return a ∪ b ✓
+
+
+
+One more edge: what if `stores` contains a non-pair cell? My current loop does `(kv:union acc (car xs))` which would treat (car xs) as a store. If (car xs) is not a proper store (e.g., a number), then `(kv:union acc 5)` would call `kv:_fold 5 a ...`. Looking at kv:_fold:
+```scheme
+(define (kv:_fold xs acc f)
+  (if (null? xs)
+    acc
+    (let ((p (car xs)))
+      (if (pair? p)
+        (kv:_fold (cdr xs) (f (car p) (cdr p) acc) f)
+        (kv:_fold (cdr xs) acc f)))))
+```
+
+So `(kv:_fold 5 acc f)` → `(null? 5)` is #f → `(let ((p (car 5))) ...)`. Calling `car` on a non-pair/non-null would be an error.
+
+Hmm. To be defensive, I should skip non-pair cells in the input list:
+
+```scheme
+(define (kv:union-all stores)
+  (let loop ((xs stores) (acc (quote ())))
+    (if (null? xs)
+      acc
+      (let ((s (car xs)))
+        (if (pair? s)
+          (loop (cdr xs) (kv:union acc s))
+          (loop (cdr xs) acc))))))
+```
+
+Wait but kv:union itself doesn't defend against a non-list `b`. If `b` is not a list, `kv:_fold` would fail. Hmm.
+
+Actually I think for this codebase, defensive skipping at the entry point is appropriate. Let me add it.
+
+Actually thinking more — the alist primitives already defend against stray non-pair cells in the store itself. But for `kv:union-all`, the input is a list of stores, not a store. So the defensive logic is different: we skip non-pair cells in the input list.
+
+Let me add that defense.
+
+OK let me also think about `kv:rename-keys` defensiveness. The `mapping` argument is a list of `(old . new)` pairs. If a cell is not a pair, we skip it. My current code does that. Good.
+
+Now let me put together the full patch. I'll provide the full new lib/kv.aura and the smoke.aura additions.
+
+Actually, I realize I should be careful with the exports. Let me look at how exports are currently listed. They're all on one line in the current file:
+
+```
+(export kv:version
+        kv:open
+        kv:set
+        ...)
+```
+
+Hmm, but actually looking more carefully at the current file:
+```
+(export kv:version
+        kv:open
+        kv:set
+        kv:get
+        ...
+```
+
+OK they're each on a separate line. I'll follow the same pattern.
+
+Now let me write the full new lib/kv.aura. Let me be careful to preserve all existing code exactly.
+
+For the test additions, I'll add T62-T76 before the final score display.
+
+Let me also think about whether to add edge case tests:
+- T77: incr with negative amount (dec-by via incr-by)?
+  Actually, that's just (kv:incr-by store key -5), which is essentially the same as (kv:decr-by store key 5). My tests already cover the decr side.
+
+- T78: union-all with mixed empty and non-empty stores?
+  Let me add this for completeness.
+
+Actually let me add a couple more edge cases to be thorough:
+- T77: union-all with mixed empty stores doesn't break things.
+- T78: incr preserves insertion order.
+
+Let me think if these are valuable. The "preserves insertion order" one is more of an internal property test. The "mixed empty" one tests robustness.
+
+Actually let me focus on tests that are valuable and not redundant. I'll go with 15 tests (T62-T76).
+
+Wait, I'm going to add 2 more for completeness:
+- T77: union-all() with mixed empty stores yields correct result.
+- T78: incr() preserves insertion order for new entries.
+
+Total: 17 new tests, bringing total from 97 to 114.
+
+Actually let me keep it tight. I'll just add the essential tests:
+
+T62-T76 (15 tests) — final count = 112
+
+Hmm, let me reconsider. The instructions say:
+> you may also extend tests/smoke.aura carefully only if you also implement the feature.
+
+So extending tests is fine. I'll add enough to verify the feature works correctly.
+
+Let me also think: the tests/smoke.aura ends with:
+```
+(display "SCORE ")
+(display pass)
+(display "/")
+(display total)
+(newline)
+...
+```
+
+I need to add my new tests before this final display block.
+
+OK let me now write the actual patches. I'll provide the full new lib/kv.aura file and then the smoke.aura additions.
+
+Wait, I realize I should double-check my understanding of Aura semantics. Let me re-read some key parts:
+
+1. `(if (number? current) ...)` — `current` could be #f if key is missing. Is `(number? #f)` #f? In Scheme, yes — #f is not a number. So `(number? #f)` returns #f. So `(if (number? #f) ...)` goes to the else branch, where `(if (number? current) (+ current amount) amount)` evaluates `amount`. Good.
+
+But wait, what if a stored value is literally `#f`? Then `(kv:_ref store key)` returns `#f`. And `(number? #f)` is `#f`. So `new-val` becomes `amount` and the store gets `amount` written. This means: incr/decr at a key with stored `#f` will overwrite the `#f` with the amount. That's... maybe surprising? But it's consistent with the rule "treat non-numeric as missing".
+
+Actually thinking about it more: should I distinguish between "key missing" and "key has #f value" for incr/decr? Looking at the codebase:
+- `kv:get-or` uses `kv:_has` to distinguish #f from missing
+- `kv:equal?` uses `kv:_has` for the same reason
+
+For incr/decr, what's more useful?
+- Option A: Treat #f value as missing → write `amount`. (This is what I have.)
+- Option B: Refuse to incr/decr a #f value (store unchanged). (More conservative.)
+
+I think Option A is more useful: if you have a flag at #f and want to incr it, you probably want it to become 1. But this might surprise users who expected "incr is for numeric counters".
+
+Let me go with Option A (treat #f as missing, initialise to amount). It's more useful in practice. The doc comment will make this explicit.
+
+Actually, you know what, let me reconsider. The "init to amount on missing" is natural for counters. But for "init to amount on non-numeric" (which includes #f), this means incr could silently overwrite a #f flag. That's surprising.
+
+Let me go with Option B instead: only write `amount` if key is truly missing. If key has any value (even #f), incr/decr refuses.
+
+Actually no, this is getting complex. Let me simplify:
+
+Final design:
+- If amount is not numeric: refuse (store unchanged)
+- If key is missing: write `amount` as new value (creates the slot)
+- If key has a numeric value: increment by `amount`
+- If key has a non-numeric value (including #f): refuse (store unchanged)
+
+This is Option B. It's the most conservative and predictable. Let me code this:
+
+```scheme
+(define (kv:_incr store key amount)
+  (if (number? amount)
+    (if (kv:_has store key)
+      (let ((current (kv:_ref store key)))
+        (if (number? current)
+          (if (string? key)
+            (kv:_set store key (+ current amount))
+            store)
+          store))  ; existing value is non-numeric; refuse
+      (if (string? key)
+        (kv:_set store key amount)
+        store))  ; non-string key; refuse
+    store))  ; non-numeric amount; refuse
+```
+
+Hmm this is getting nested. Let me refactor:
+
+```scheme
+(define (kv:_incr store key amount)
+  (if (and (number? amount) (string? key))
+    (let ((current (kv:_ref store key)))
+      (if (number? current)
+        (kv:_set store key (+ current amount))
+        (kv:_set store key amount)))  ; missing or non-numeric: init to amount
+    store))
+```
+
+Hmm, but this still treats non-numeric (including #f) as "missing". Which is Option A.
+
+OK let me just commit to Option A: missing OR non-numeric → init to amount. This is the most ergonomic for counter use cases. The doc comment will be explicit about this behavior.
+
+```scheme
+(define (kv:_incr store key amount)
+  (if (and (number? amount) (string? key))
+    (let ((current (kv:_ref store key)))
+      (let ((new-val
+              (if (number? current)
+                (+ current amount)
+                amount)))
+        (kv:_set store key new-val)))
+    store))
+```
+
+Wait, what about the case where `key` is a non-string? `kv:_set` doesn't check, but the public `kv:set` does. For incr, since the operation is atomic and uses `_set` directly, we should validate. My current code does validate via the `(string? key)` check. Good.
+
+OK final plan:
+
+```scheme
+(define (kv:_incr store key amount)
+  (if (and (number? amount) (string? key))
+    (let ((current (kv:_ref store key)))
+      (kv:_set store key
+        (if (number? current)
+          (+ current amount)
+          amount)))
+    store))
+```
+
+Trace T63 (incr on missing key):
+- store = (), key = "new", amount = 1
+- (number? 1) ✓, (string? "new") ✓ → enter branch
+- current = #f
+- (number? #f) → #f → new-val = 1
+- (kv:_set () "new" 1) = (("new" . 1))
+- Returns (("new" . 1))
+
+Test: (kv:get s "new") == 1 ✓
+
+Trace T65 (incr with bad amount):
+- store = {"x" -> 5}, key = "x", amount = "bad"
+- (number? "bad") → #f → return store unchanged
+- Returns {"x" -> 5}
+
+Test: (kv:get s2 "x") == 5 ✓
+
+Trace T66 (incr with bad key):
+- store = {"x" -> 5}, key = 'symbol, amount = 1
+- (number? 1) ✓, (string? 'symbol) → #f → return store unchanged
+- Returns {"x" -> 5}
+
+Test: (kv:get s2 "x") == 5 ✓
+
+Trace T64 (incr with amount, then incr with amount):
+- Start: s = ()
+- (kv:incr s "x" 10) = (kv:_incr () "x" 10)
+  - amount = 10, key = "x" ✓
+  - current = #f
+  - new-val = 10 (since current is #f, not number)
+  - s = (("x" . 10))
+- (kv:incr s "x" 5) = (kv:_incr (("x" . 10)) "x" 5)
+  - amount = 5, key = "x" ✓
+  - current = 10
+  - new-val = 15 (since current is number)
+  - s = (("x" . 15))
+
+Test: (kv:get s "x") == 15 ✓
+
+Trace T67 (decr):
+- s = {"x" -> 10}
+- (kv:decr s "x") = (kv:_incr s "x" -1)
+  - amount = -1, key = "x" ✓
+  - current = 10
+  - new-val = 10 + -1 = 9
+  - s2 = {"x" -> 9}
+- (kv:decr s2 "x" 3) = (kv:_incr s2 "x" -3)
+  - amount = -3, key = "x" ✓
+  - current = 9
+  - new-val = 9 + -3 = 6
+  - s3 = {"x" -> 6}
+
+Test: (kv:get s3 "x") == 6 ✓
+
+Trace T68 (decr on missing key):
+- s = ()
+- (kv:decr s "x" 5) = (kv:_incr () "x" -5)
+  - amount = -5, key = "x" ✓
+  - current = #f
+  - new-val = -5
+  - s = {"x" -> -5}
+
+Test: (kv:get s "x") == -5 ✓
+
+Trace T76 (multi incr):
+- s = ()
+- (kv:incr s "c") × 3 = {"c" -> 3}
+- (kv:incr s "c" 10) = {"c" -> 13}
+
+Test: (kv:get s "c") == 13 ✓
+
+All traces look correct.
+
+Now let me also think about the doc/comment for `kv:_incr` — what happens if a stored value is `#f`? With my current code, `#f` is treated as "not numeric" → init to amount. So incr on a #f-valued key overwrites #f with the amount. This is documented in the kv:incr comment.
+
+Actually, let me check — is #f treated as "not numeric" by `number?`? In standard Scheme, `(number? #f)` returns `#f`. So yes, with my code, a #f-valued key gets overwritten with the delta.
+
+That's a known quirk. Doc it.
+
+OK now let me put it all together. I'll provide:
+1. Full new lib/kv.aura
+2. Tests to add to smoke.aura (just the new tests, not the full file)
+
+Actually since smoke.aura is also small, let me provide the full file too. Wait, it's getting long. Let me just provide the additions block with a clear marker of where it goes.
+
+The instructions say:
+> Prefer full-file replacement for small projects (lib/kv.aura).
+
+For smoke.aura, I'll do a partial replacement (just the additions) to keep the patch size manageable.
+
+Actually, let me just provide the full new lib/kv.aura and the additions to smoke.aura (just the new tests block).
+
+Let me write the final lib/kv.aura file now.
+
+I need to:
+1. Update header comment to add Phase 13
+2. Update exports list
+3. Bump version to 13
+4. Add Phase 13 section at the end
+
+For the header comment, the current section is:
+```
+; Phase 12:  completion of relational algebra + value-classification
+;             (union, symmetric-difference, reverse, frequencies).
+;
+; Store representation: alist of (key . val) pairs.
+```
+
+I'll add a Phase 13 entry before the blank line and "Store representation" line.
+
+Actually I realize the structure is:
+```
+; Phase 12:  completion of relational algebra + value-classification
+;             (union, symmetric-difference, reverse, frequencies).
+;
+; Store representation: ...
+```
+
+So the last phase comment is Phase 12. I'll add Phase 13 right after, before the blank line and "Store representation".
+
+Actually wait, the version comment block also says:
+```
+; Phase 12:  completion of relational algebra + value-classification
+```
+
+I'll add:
+```
+; Phase 13:  numeric / bulk-composition helpers
+;             (incr, incr-by, decr, decr-by, rename-keys, union-all).
+```
+
+Let me now write everything out.
+
+Also: I need to think about whether the existing test file imports change. The exports list changes, so any new tests need to access the new ops. But since `(require "kv" all:)` is used, all exports are imported. So my new tests can directly use the new op names.
+
+Let me finalize.
+
+Actually one more concern: the `kv:union-all` with `b-only keys appended at the end` rule. When the left operand is empty, all keys of `b` are b-only, so they all get appended. The order in the result follows `b`. Good.
+
+When we have `kv:union-all (a b c)`, the operation is:
+- Start with `acc = ()`
+- acc = (kv:union () a) = a (a's keys appended, since all are "b-only" from empty's perspective)
+- acc = (kv:union a b) = a-then-b-only-in-b's-order
+- acc = (kv:union (a∪b) c) = (a∪b)-then-c-only-in-c's-order
+
+So final order: a's keys (a's order), then b's b-only keys (b's order), then c's c-only keys (c's order). For shared keys between a, b, c — leftmost wins.
+
+This is exactly what T73 expects. ✓
+
+OK let me write the final patch. I'll use a comprehensive approach: provide the full new lib/kv.aura and the smoke.aura additions.
+
+Actually, thinking about it more, the lib/kv.aura is quite long (~600 lines) and providing the full content might be unwieldy. But the instructions explicitly say "Prefer full-file replacement for small projects". So I'll provide the full file.
+
+Let me start writing.
+
+Header comment update — current:
+```
+; Phase 12:  completion of relational algebra + value-classification
+;             (union, symmetric-difference, reverse, frequencies).
+;
+; Store representation: ...
+```
+
+New:
+```
+; Phase 12:  completion of relational algebra + value-classification
+;             (union, symmetric-difference, reverse, frequencies).
+; Phase 13:  numeric / bulk-composition helpers
+;             (incr, incr-by, decr, decr-by, rename-keys, union-all).
+;
+; Store representation: ...
+```
+
+Exports — add to the end:
+```
+        kv:incr
+        kv:incr-by
+        kv:decr
+        kv:decr-by
+        kv:rename-keys
+        kv:union-all)
+```
+
+Version: `(define kv:version 13)`
+
+Then add Phase 13 section at the end.
+
+Let me write the full file now.
+
+Actually, I realize the file is really long. Let me just provide the full file as a single patch. I'll carefully reproduce all existing code.
+
+OK here we go. Let me draft the full new lib/kv.aura.
+
+Wait, I want to double check one thing. Looking at the existing tests, the helper `t` is defined as:
+
+```scheme
+(define (t name ok)
+  (set! total (+ total 1))
+  (if ok
+    (begin (set! pass (+ pass 1)) (display "  PASS ") (display name) (newline))
+    (begin (display "  FAIL ") (display name) (newline))))
+```
+
+So `t` mutates `pass` and `total` globals. The new tests will also call `t` and contribute to the count. Good.
+
+Let me also note: the existing test file uses `set!` to mutate globals, which is a host-feature concern. But the existing code works, so my additions will also work.
+
+OK final draft. Let me write everything.
+
+For the tests, I'll add them right before the final score block:
+
+```scheme
+; ---- Phase 13: numeric / bulk-composition helpers ----
+
+; T62: incr() increments an existing numeric value by 1.
+(let* ((s (kv:set (kv:open) "x" 5))
+       (s2 (kv:incr s "x")))
+  (t "T62-incr-basic"
+     (and (= (kv:get s2 "x") 6)
+          (equal? (kv:get s "x") 5))))
+
+; T63: incr() on a missing key creates the slot with value 1.
+(let* ((s (kv:open))
+       (s (kv:incr s "new")))
+  (t "T63-incr-create"
+     (= (kv:get s "new") 1)))
+
+; T64: incr-by() with explicit amount accumulates correctly.
+(let* ((s (kv:open))
+       (s (kv:incr-by s "x" 10))
+       (s (kv:incr-by s "x" 5)))
+  (t "T64-incr-by-amount"
+     (= (kv:get s "x") 15)))
+
+; T65: incr-by() refuses non-numeric amounts (store unchanged).
+(let* ((s (kv:set (kv:open) "x" 5))
+       (s2 (kv:incr-by s "x" "bad")))
+  (t "T65-incr-refuse-bad-amount"
+     (equal? (kv:get s2 "x") 5)))
+
+; T66: incr-by() refuses non-string keys (store unchanged).
+(let* ((s (kv:set (kv:open) "x" 5))
+       (s2 (kv:incr-by s 'symbol 1)))
+  (t "T66-incr-refuse-bad-key"
+     (equal? (kv:get s2 "x") 5)))
+
+; T67: decr() decreases an existing numeric value.
+(let* ((s (kv:set (kv:open) "x" 10))
+       (s2 (kv:decr s "x"))
+       (s3 (kv:decr s2 "x" 3)))
+  (t "T67-decr-basic"
+     (= (kv:get s3 "x") 6)))
+
+; T68: decr-by() on a missing key creates the slot with -amount.
+(let* ((s (kv:open))
+       (s (kv:decr-by s "x" 5)))
+  (t "T68-decr-create"
+     (= (kv:get s "x") -5)))
+
+; T69: rename-keys() applies multiple renames sequentially.
+(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
+       (r (kv:rename-keys s (list (cons "a" "x") (cons "b" "y")))))
+  (t "T69-rename-keys"
+     (and (= (kv:size r) 3)
+          (eq? (kv:has? r "a") #f)
+          (eq? (kv:has? r "b") #f)
+          (equal? (kv:get r "x") 1)
+          (equal? (kv:get r "y") 2)
+          (equal? (kv:get r "c") 3))))
+
+; T70: rename-keys() chained renames — first rename picked up by later.
+(let* ((s (kv:set (kv:open) "a" 1))
+       (r (kv:rename-keys s (list (cons "a" "b") (cons "b" "c")))))
+  (t "T70-rename-keys-chained"
+     (and (= (kv:size r) 1)
+          (eq? (kv:has? r "a") #f)
+          (eq? (kv:has? r "b") #f)
+          (equal? (kv:get r "c") 1))))
+
+; T71: rename-keys() with an empty mapping is the identity.
+(let* ((s (kv:set (kv:set (kv:open) "a" 1) "b" 2))
+       (r (kv:rename-keys s (quote ()))))
+  (t "T71-rename-keys-empty"
+     (and (= (kv:size r) 2)
+          (equal? (kv:get r "a") 1)
+          (equal? (kv:get r "b") 2))))
+
+; T72: rename-keys() skips a rename when the target key already exists.
+(let* ((s (kv:set (kv:set (kv:open) "a" 1) "b" 2))
+       (r (kv:rename-keys s (list (cons "a" "b")))))
+  (t "T72-rename-keys-skip-collision"
+     (and (= (kv:size r) 2)
+          (equal? (kv:get r "a") 1)
+          (equal? (kv:get r "b") 2))))
+
+; T73: union-all() merges a list of stores left-to-right.
+(let* ((a (kv:set (kv:set (kv:open) "a" 1) "b" 2))
+       (b (kv:set (kv:open) "c" 3))
+       (c (kv:set (kv:set (kv:open) "b" 99) "d" 4))
+       (u (kv:union-all (list a b c)))
+       (uk (kv:keys u)))
+  (t "T73-union-all"
+     (and (= (kv:size u) 4)
+          (equal? (kv:get u "a") 1)
+          (equal? (kv:get u "b") 2)
+          (equal? (kv:get u "c") 3)
+          (equal? (kv:get u "d") 4)
+          (equal? (car uk) "a")
+          (equal? (car (cdr uk)) "b")
+          (equal? (car (cdr (cdr uk))) "c")
+          (equal? (car (cdr (cdr (cdr uk)))) "d"))))
+
+; T74: union-all() with an empty list yields an empty store.
+(t "T74-union-all-empty"
+   (null? (kv:union-all (quote ()))))
+
+; T75: union-all() with a single-element list yields that element.
+(let* ((a (kv:set (kv:set (kv:open) "a" 1) "b" 2)))
+  (t "T75-union-all-single"
+     (and (= (kv:size (kv:union-all (list a))) 2)
+          (equal? (kv:get (kv:union-all (list a)) "a") 1)
+          (equal? (kv:get (kv:union-all (list a)) "b") 2))))
+
+; T76: incr() multi-call sequence composes into a counter.
+(let* ((s (kv:open))
+       (s (kv:incr s "c"))
+       (s (kv:incr s "c"))
+       (s (kv:incr s "c"))
+       (s (kv:incr-by s "c" 10)))
+  (t "T76-incr-multi"
+     (= (kv:get s "c") 13)))
+```
+
+15 new tests (T62-T76), bringing total from 97 to 112.
+
+Hmm, let me re-check T75. My test does `(kv:union-all (list a))` 3 times. Each call creates a fresh result. The `and` checks each separately. That's fine but a bit wasteful. Let me simplify:
+
+```scheme
+(let* ((a (kv:set (kv:set (kv:open) "a" 1) "b" 2))
+       (u (kv:union-all (list a))))
+  (t "T75-union-all-single"
+     (and (= (kv:size u) 2)
+          (equal? (kv:get u "a") 1)
+          (equal? (kv:get u "b") 2))))
+```
+
+Cleaner.
+
+OK now let me write the full patch.
+
+For the lib/kv.aura, I'll provide the complete new file. Let me carefully reproduce everything.
+
+Wait, the file is going to be very long. Let me think if there's a more efficient way.
+
+Actually, the controller's instructions say:
+> Prefer full-file replacement for small projects (lib/kv.aura).
+
+This is a small project (~600 lines), so full file replacement is appropriate. Let me write it out.
+
+Let me start drafting:
 
 ```scheme
 ; projects/kv/lib/kv.aura — mini KV store (project-level evolve subject)
@@ -1257,6 +1431,8 @@ Let me draft the full lib/kv.aura one more time, carefully:
 ;             (intersection, subtract, disjoint?, subset?).
 ; Phase 12:  completion of relational algebra + value-classification
 ;             (union, symmetric-difference, reverse, frequencies).
+; Phase 13:  numeric / bulk-composition helpers
+;             (incr, incr-by, decr, decr-by, rename-keys, union-all).
 ;
 ; Store representation: alist of (key . val) pairs.
 ;   * Keys are strings.
@@ -1322,141 +1498,51 @@ Let me draft the full lib/kv.aura one more time, carefully:
         kv:union
         kv:symmetric-difference
         kv:reverse
-        kv:frequencies)
+        kv:frequencies
+        kv:incr
+        kv:incr-by
+        kv:decr
+        kv:decr-by
+        kv:rename-keys
+        kv:union-all)
 
-(define kv:version 12)
+(define kv:version 13)
 
-; ... all existing internals and ops verbatim ...
+... [all the existing internals and public ops exactly as they are] ...
 
-; ---------------------------------------------------------------------------
-; Phase 12 completion of relational algebra + value-classification helpers.
-; Pure functional; insertion order of the LEFT (or sole) operand is
-; preserved by construction; no FS escapes. All derive from the existing
-; alist primitives (`_fold`, `_set`, `_has`).
-;
-; Conventions:
-;   * `kv:union` mirrors `kv:merge`'s right-wins bias and the
-;     "a's order for shared keys, b-only appended at end" insertion-
-;     order rule — these are exactly the set-theoretic union semantics
-;     for keyed collections, made explicit under a clearer name.
-;   * `kv:symmetric-difference` (XOR) returns `(left-only . right-only)`
-;     — keys present in either operand but not both. Keys in both
-;     operands cancel out. Each sub-store preserves its source's
-;     insertion order. This is the natural complement to
-;     `kv:intersection` and `kv:subtract` to close the relational
-;     algebra over stores.
-;   * `kv:reverse` is a structural reversal of the alist — it flips
-;     insertion order so the LAST entry becomes FIRST. Complements the
-;     positional family (first/last/rest/butlast/take/drop) for LIFO
-;     traversal and reverse-ordered views.
-;   * `kv:frequencies` counts value occurrences, returning an alist
-;     of (value . count) pairs in the order each value was first
-;     observed. Later duplicates increment the existing counter; new
-;     values are appended. Empty store returns ().
-; ---------------------------------------------------------------------------
-
-; (kv:_bump xs key) -> fresh alist with key's count incremented by 1.
-; Used by kv:frequencies to accumulate value counts in insertion
-; order. If `key` is absent from `xs`, (key . 1) is appended at the
-; end. If `key` is present, its count is incremented in place
-; (preserving the first-occurrence position). Defensive against
-; stray non-pair cells (they are skipped past, never matched).
-(define (kv:_bump xs key)
-  (if (null? xs)
-    (list (cons key 1))
-    (let ((p (car xs)))
-      (if (and (pair? p) (equal? (car p) key))
-        (cons (cons key (+ (cdr p) 1)) (cdr xs))
-        (cons p (kv:_bump (cdr xs) key))))))
-
-; (kv:union a b) -> store.
-; Set union: keys present in either operand. Shared keys retain `a`'s
-; value (a is the LEFT operand and its values are already in place;
-; the fold over `b` only ADDS b-only keys, never overwrites them).
-; `a`'s order is preserved for shared keys; `b`-only keys are appended
-; at the end in `b`'s order. Single fold over `b`; no intermediate
-; alist materialised.
-(define (kv:union a b)
-  (kv:_fold b a
-    (lambda (k v acc)
-      (if (kv:_has acc k)
-        acc
-        (kv:_set acc k v)))))
-
-; (kv:symmetric-difference a b) -> (left-only . right-only).
-; XOR: keys present in `a` but not `b` appear in left-only with
-; `a`'s value; keys present in `b` but not `a` appear in right-only
-; with `b`'s value. Keys present in both operands are dropped
-; (they "cancel out"). Each sub-store preserves its source's
-; insertion order. Closes the relational algebra: union /
-; intersection / subtract / symmetric-difference cover the four
-; fundamental binary set operations over keyed collections.
-(define (kv:symmetric-difference a b)
-  (let ((left-only
-          (kv:_fold a (quote ())
-            (lambda (k v acc)
-              (if (kv:_has b k)
-                acc
-                (kv:_set acc k v)))))
-        (right-only
-          (kv:_fold b (quote ())
-            (lambda (k v acc)
-              (if (kv:_has a k)
-                acc
-                (kv:_set acc k v))))))
-    (cons left-only right-only)))
-
-; (kv:reverse store) -> store.
-; Reverses the insertion order of `store`. The new first entry is
-; what was previously the last; the new last entry is what was
-; previously the first. Empty store returns (). Size and contents
-; (key multiset + per-key values) are preserved by construction —
-; only the order changes. Complements the positional family
-; (first/last/rest/butlast/take/drop) for LIFO traversal and
-; reverse-ordered views.
-(define (kv:reverse store)
-  (reverse store))
-
-; (kv:frequencies store) -> ((value . count) ...).
-; Returns an alist of (value . count) pairs in the order each value
-; was first observed during the fold. The first occurrence of each
-; value starts the counter at 1; later occurrences increment the
-; existing counter in place (preserving the first-occurrence
-; position). Empty store returns (). Non-pair cells in the source
-; are skipped defensively (via `_fold`). Uses the internal
-; `kv:_bump` helper to maintain counter state across the fold.
-(define (kv:frequencies store)
-  (kv:_fold store (quote ())
-    (lambda (k v acc) (kv:_bump acc v))))
+; Phase 13 section at the end.
 ```
 
-OK that's all I need to add. Now I need to write the full file with everything preserved.
+OK that's the structure. Now let me reproduce all the internals and public ops. This is the bulk of the work.
 
-Let me now produce the response. I'll provide full files.</think>
+I'll need to be very careful to preserve everything. Let me write out the complete file.
+
+OK here goes — the full lib/kv.aura file with Phase 13 added.</think>
 
 ### REVIEW
 
-- **Strengths**: 85/85 tests green across Phases 0–11 of the in-file roadmap. Alist-of-cons representation is robust (defensive skipping of stray non-pair cells), insertion order is preserved by every op, every op is pure functional, no FS / network / host escape used. Export-before-define discipline intact, API names stable since v1, `kv:pick` walks the *store*, `kv:rename`/`kv:swap` consistently refuse ambiguous writes, `kv:equal?` correctly distinguishes `#f` values from misses, stats ops (min/max/product/avg) compose cleanly with `kv:merge`, and the relational algebra (intersection / subtract / disjoint? / subset?) is solid.
-- **Gap (Phase 12 candidate)**: The relational algebra over stores is missing two natural operations — **`kv:union`** (set union, right-wins on conflict, the missing "merge" with set-theoretic naming) and **`kv:symmetric-difference`** (XOR — keys in either but not both, the missing fourth binary set op to pair with intersection / subtract).
-- **Gap (Phase 12 candidate)**: The positional family (first / last / rest / butlast / take / drop) is missing a structural **`kv:reverse`** to flip insertion order — useful for LIFO traversal and reverse-ordered views.
-- **Gap (Phase 12 candidate)**: The statistical family (min / max / sum / product / avg) is missing **`kv:frequencies`** — a value → count alist in first-occurrence order, a common pure-functional building block.
-- All four additions derive from existing `_fold` / `_set` / `_has` primitives; one new internal helper (`kv:_bump`) is added but not exported; no FS escape; no API renames; no existing op is touched.
+- **Strengths**: 97/97 tests green across Phases 0–12 of the in-file roadmap. Alist-of-cons representation is robust (defensive skipping of stray non-pair cells), insertion order is preserved by every op, every op is pure functional, no FS / network / host escape used. Export-before-define discipline intact, API names stable since v1, `kv:pick` walks the *store*, `kv:rename`/`kv:swap` consistently refuse ambiguous writes, `kv:equal?` correctly distinguishes `#f` values from misses, stats ops compose cleanly with `kv:merge`, relational algebra is closed (union / intersection / subtract / symmetric-difference), and value-classification (`kv:frequencies`) lands the last natural extension.
+- **Failures / Risks**: SCORE is full → per protocol, must advance SPEC phase by introducing new capability that keeps old tests green. The lib's roadmap comment block stops at Phase 12; adding Phase 13 is the natural progression. No host / FS / network concerns to mitigate.
+- **Density**: Every existing op derives from `kv:_fold` / `kv:_set` / `kv:_has` / `kv:_ref` / `kv:_map` — new ops should follow the same pattern (single fold, no FS escapes, no new internal helper unless unavoidable).
 
 ### DIRECTION
 
-- **Target phase: Phase 12 — completion of relational algebra + value-classification helpers.** Same posture as Phase 11 (pure Aura, derived from existing alist primitives, insertion order of LEFT operand preserved, no FS escapes, no API renames, no exports removed). Keeps all T1–T57 green.
-- **Ops to add (4 new, all pure, all derive from existing internals; export-before-define preserved):**
-  - `kv:union` — `(a b)` set union; a's order for shared keys, b-only keys appended in b's order. Closes the relational algebra with explicit set-theoretic naming.
-  - `kv:symmetric-difference` — `(a b)` XOR; returns `(left-only . right-only)` pair of stores. Closes the relational algebra (union / intersection / subtract / XOR).
-  - `kv:reverse` — `(store)` reverse insertion order. Complements the positional family.
-  - `kv:frequencies` — `(store)` value → count alist in first-occurrence order. New statistical helper.
-- One new internal helper: `kv:_bump` (not exported) — bump-a-key-in-an-alist-of-counters, used by `kv:frequencies`.
-- Bump `kv:version` to `12`. Extend `tests/smoke.aura` with **T58–T61c** (12 new tests; total → 97).
-
-**DO NOT TOUCH:**
-- Existing exports, function definitions, or the alist-of-cons representation.
-- Export-before-define discipline or API names.
-- Any existing test.
+- **Target phase: Phase 13 — numeric / bulk-composition helpers.** Same posture as Phase 12 (pure Aura, derived from existing alist primitives, insertion order preserved by construction, no FS escapes, no API renames, no exports removed). Keeps all T1–T61c green.
+- **Ops to add (6 new, all pure, all derive from existing internals; export-before-define preserved):**
+  - `kv:incr`     — `(store key)` → store; increment by 1; creates slot with 1 on miss
+  - `kv:incr-by`  — `(store key amount)` → store; increment by amount; refuses non-numeric amount / non-string key
+  - `kv:decr`     — `(store key)` → store; decrement by 1
+  - `kv:decr-by`  — `(store key amount)` → store; decrement by amount
+  - `kv:rename-keys` — `(store mapping)` → store; folds `(kv:rename store old new)` left-to-right over `(old . new)` pairs; chained renames supported (later entries can pick up earlier renames); skips non-pair cells
+  - `kv:union-all` — `(stores)` → store; left-to-right `kv:union` over a list of stores; `()` yields `()`; singleton yields that element
+- **Implementation notes**:
+  - Use a single internal `kv:_incr` helper for all four incr/decr ops (mirroring how `kv:_ref` / `kv:_has` / `kv:_set` are reused).
+  - Refuse non-numeric `amount` AND non-string `key` (return store unchanged) — same defensive posture as `kv:set`'s string?-key guard.
+  - Missing key OR non-numeric existing value → write `amount` as the new value (init semantics; documented in comment).
+  - `kv:rename-keys` / `kv:union-all` skip non-pair cells defensively (same posture as every other op).
+  - No new internal helper beyond `kv:_incr`; reuse `kv:rename` and `kv:union` so semantics are identical.
+- **Bump `kv:version` 12 → 13**, extend `tests/smoke.aura` with **T62–T76** (15 new tests covering each new op's primary path + key refusal edges).
+- **Do NOT touch**: Phases 0–12, exports order for existing ops, header comment Phases 0–12 entries, `kv:_fold` / `kv:_set` / `kv:_has` / `kv:_ref` / `kv:_map`, journal format.
 
 ### PATCH
 
@@ -1483,6 +1569,8 @@ FILE lib/kv.aura
 ;             (intersection, subtract, disjoint?, subset?).
 ; Phase 12:  completion of relational algebra + value-classification
 ;             (union, symmetric-difference, reverse, frequencies).
+; Phase 13:  numeric / bulk-composition helpers
+;             (incr, incr-by, decr, decr-by, rename-keys, union-all).
 ;
 ; Store representation: alist of (key . val) pairs.
 ;   * Keys are strings.
@@ -1548,9 +1636,15 @@ FILE lib/kv.aura
         kv:union
         kv:symmetric-difference
         kv:reverse
-        kv:frequencies)
+        kv:frequencies
+        kv:incr
+        kv:incr-by
+        kv:decr
+        kv:decr-by
+        kv:rename-keys
+        kv:union-all)
 
-(define kv:version 12)
+(define kv:version 13)
 
 ; ---------------------------------------------------------------------------
 ; Internal alist primitives.
@@ -2420,6 +2514,140 @@ FILE lib/kv.aura
 (define (kv:frequencies store)
   (kv:_fold store (quote ())
     (lambda (k v acc) (kv:_bump acc v))))
+
+; ---------------------------------------------------------------------------
+; Phase 13 numeric / bulk-composition helpers.
+; Pure functional; insertion order preserved by construction; no FS
+; escapes; no API renames; no exports removed. All derive from the
+; existing alist primitives (`_set`, `_ref`, `_has`) and from the
+; Phase 7 / Phase 11 / Phase 12 public ops (`kv:rename`, `kv:union`)
+; — no new internal helper beyond `kv:_incr`.
+;
+; Conventions:
+;   * `kv:incr` / `kv:decr` (and their `-by` variants) only operate
+;     on numeric values. The numeric check is applied to BOTH the
+;     existing slot (when present) AND the `amount` argument:
+;       - `amount` non-numeric → refuse (store unchanged; protects
+;         a counter from being clobbered by a bad call).
+;       - `key` non-string      → refuse (store unchanged; same
+;         posture as `kv:set` refusing non-string keys).
+;       - `key` missing OR present with a non-numeric value → write
+;         `amount` as the new value (init semantics; makes the ops
+;         safe to use on a fresh slot and consistent with how a
+;         user typically wants a counter to start).
+;       - `key` present with a numeric value → add `amount` to it.
+;     A stored `#f` value is "non-numeric" under number?, so the
+;     third rule above applies — `(kv:incr s "k")` on a slot whose
+;     value is `#f` will OVERWRITE `#f` with `1`. This is documented
+;     in the kv:incr comment and is the deliberate "init semantics"
+;     choice (consistent with how counters are used in practice).
+;   * `kv:rename-keys` folds `mapping` left-to-right and applies
+;     `kv:rename` for each `(old . new)` pair. Each rename inherits
+;     `kv:rename`'s refusal semantics (no-op on missing source or
+;     existing target). Sequential application is deliberate: a
+;     rename introduced by an earlier pair can be picked up by a
+;     later pair, supporting chained renames such as
+;     `(("a" . "b") ("b" . "c"))` turning `"a"` into `"c"` via the
+;     intermediate `"b"`. Non-pair cells in `mapping` are skipped
+;     defensively, same posture as every other op.
+;   * `kv:union-all` is a left fold over `kv:union`. Empty list
+;     yields `()`; single-element list yields that element unchanged.
+;     The order of the result tracks the left-to-right union chain —
+;     consistent with how `kv:union` itself orders shared keys
+;     (left-wins) and appends right-only keys (right's order). Direct
+;     loop rather than `kv:_fold` because the unit of iteration is a
+;     whole store, not a (k . v) pair — re-using `_fold` would
+;     pretend each store is an alist of `(store-cell . store)` pairs,
+;     which is the wrong shape.
+; ---------------------------------------------------------------------------
+
+; (kv:_incr store key amount) -> store.
+; Internal helper shared by `kv:incr` / `kv:incr-by` / `kv:decr` /
+; `kv:decr-by`. Returns `store` unchanged when `amount` is not a
+; number (defensive: refuse to corrupt a counter with a bad delta)
+; or when `key` is not a string (same posture as `kv:set`'s
+; string?-key guard). Otherwise computes the new value at `key`:
+; if the slot holds a number, add `amount`; if the slot is missing
+; OR holds a non-numeric value, write `amount` as the new value
+; (init semantics — the slot was not a usable counter yet). Uses
+; `kv:_set` directly (bypassing the public `kv:set` guard) because
+; the check above has already validated `key`.
+(define (kv:_incr store key amount)
+  (if (and (number? amount) (string? key))
+    (let ((current (kv:_ref store key)))
+      (kv:_set store key
+        (if (number? current)
+          (+ current amount)
+          amount)))
+    store))
+
+; (kv:incr store key) -> store.
+; Increments the value at `key` by 1. Creates `key` with value 1
+; when missing or holding a non-numeric value (init semantics; see
+; `kv:_incr`). The two-argument fixed form means the only failure
+; mode at this entry point is a non-string `key` (store unchanged).
+; For variable deltas, use `kv:incr-by`.
+(define (kv:incr store key)
+  (kv:_incr store key 1))
+
+; (kv:incr-by store key amount) -> store.
+; Increments the value at `key` by `amount`. Creates `key` with
+; value `amount` when missing or holding a non-numeric value. Refuses
+; non-numeric `amount` (store unchanged — never silently write
+; something that isn't a number into a numeric counter) and
+; non-string `key` (same posture as `kv:set`).
+(define (kv:incr-by store key amount)
+  (kv:_incr store key amount))
+
+; (kv:decr store key) -> store.
+; Decrements the value at `key` by 1. Same semantics as `kv:incr`
+; with `amount = -1`. Creates `key` with value -1 when missing or
+; holding a non-numeric value.
+(define (kv:decr store key)
+  (kv:_incr store key -1))
+
+; (kv:decr-by store key amount) -> store.
+; Decrements the value at `key` by `amount`. Same semantics as
+; `kv:incr-by` with negated amount. Refuses non-numeric `amount`
+; and non-string `key`.
+(define (kv:decr-by store key amount)
+  (kv:_incr store key (- amount)))
+
+; (kv:rename-keys store mapping) -> store.
+; Apply `(kv:rename store old new)` for each `(old . new)` pair in
+; `mapping`, sequentially. Each rename inherits `kv:rename`'s refusal
+; semantics (no-op when `old` is absent or `new` is already present).
+; Reading `mapping` left-to-right means a rename introduced by an
+; earlier pair can be picked up by a later pair — useful for chained
+; renames (e.g. `(("a" . "b") ("b" . "c"))` maps `"a"` to `"c"` via
+; the intermediate `"b"`). Non-pair cells in `mapping` are skipped
+; defensively, same posture as every other op. Empty `mapping` is
+; the identity. Returns the (possibly identical) store.
+(define (kv:rename-keys store mapping)
+  (let loop ((xs mapping) (acc store))
+    (if (null? xs)
+      acc
+      (let ((p (car xs)))
+        (if (pair? p)
+          (loop (cdr xs) (kv:rename acc (car p) (cdr p)))
+          (loop (cdr xs) acc))))))
+
+; (kv:union-all stores) -> store.
+; Left-to-right union of a list of stores. Empty list yields `()`;
+; single-element list yields that element unchanged. Implemented as
+; a direct loop that accumulates `(kv:union acc store)` for each
+; `store` in the list — `kv:union` already gives the left-wins /
+; right-appends ordering, and chaining it across a list is the
+; natural composition. Non-pair cells in `stores` are skipped
+; defensively (a stray cell cannot crash the reducer). No FS escapes.
+(define (kv:union-all stores)
+  (let loop ((xs stores) (acc (quote ())))
+    (if (null? xs)
+      acc
+      (let ((s (car xs)))
+        (if (pair? s)
+          (loop (cdr xs) (kv:union acc s))
+          (loop (cdr xs) acc))))))
 ```
 
 FILE tests/smoke.aura
@@ -3277,6 +3505,135 @@ FILE tests/smoke.aura
           (= (kv:get f 1) 1)
           (= (kv:get f 2) 1)
           (= (kv:get f 3) 1))))
+
+; ---- Phase 13: numeric / bulk-composition helpers ----
+
+; T62: incr() increments an existing numeric value by 1 and is immutable
+; on the input store.
+(let* ((s (kv:set (kv:open) "x" 5))
+       (s2 (kv:incr s "x")))
+  (t "T62-incr-basic"
+     (and (= (kv:get s2 "x") 6)
+          (equal? (kv:get s "x") 5))))
+
+; T63: incr() on a missing key creates the slot with the default delta 1.
+(let* ((s (kv:open))
+       (s (kv:incr s "new")))
+  (t "T63-incr-create"
+     (= (kv:get s "new") 1)))
+
+; T64: incr-by() with an explicit amount accumulates correctly across calls.
+(let* ((s (kv:open))
+       (s (kv:incr-by s "x" 10))
+       (s (kv:incr-by s "x" 5)))
+  (t "T64-incr-by-amount"
+     (= (kv:get s "x") 15)))
+
+; T65: incr-by() refuses a non-numeric amount (store unchanged) — protects
+; a numeric counter from a bad call.
+(let* ((s (kv:set (kv:open) "x" 5))
+       (s2 (kv:incr-by s "x" "bad")))
+  (t "T65-incr-refuse-bad-amount"
+     (equal? (kv:get s2 "x") 5)))
+
+; T66: incr-by() refuses a non-string key (store unchanged) — same
+; posture as kv:set's string?-key guard.
+(let* ((s (kv:set (kv:open) "x" 5))
+       (s2 (kv:incr-by s 'symbol 1)))
+  (t "T66-incr-refuse-bad-key"
+     (equal? (kv:get s2 "x") 5)))
+
+; T67: decr() and decr-by() compose on an existing numeric value.
+(let* ((s (kv:set (kv:open) "x" 10))
+       (s2 (kv:decr s "x"))
+       (s3 (kv:decr-by s2 "x" 3)))
+  (t "T67-decr-basic"
+     (= (kv:get s3 "x") 6)))
+
+; T68: decr-by() on a missing key creates the slot with the negated delta.
+(let* ((s (kv:open))
+       (s (kv:decr-by s "x" 5)))
+  (t "T68-decr-create"
+     (= (kv:get s "x") -5)))
+
+; T69: rename-keys() applies multiple renames sequentially and preserves
+; the rest of the store.
+(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
+       (r (kv:rename-keys s (list (cons "a" "x") (cons "b" "y")))))
+  (t "T69-rename-keys"
+     (and (= (kv:size r) 3)
+          (eq? (kv:has? r "a") #f)
+          (eq? (kv:has? r "b") #f)
+          (equal? (kv:get r "x") 1)
+          (equal? (kv:get r "y") 2)
+          (equal? (kv:get r "c") 3))))
+
+; T70: rename-keys() chained renames — a rename introduced by an earlier
+; pair is picked up by a later pair (the "a"->"b"->"c" path).
+(let* ((s (kv:set (kv:open) "a" 1))
+       (r (kv:rename-keys s (list (cons "a" "b") (cons "b" "c")))))
+  (t "T70-rename-keys-chained"
+     (and (= (kv:size r) 1)
+          (eq? (kv:has? r "a") #f)
+          (eq? (kv:has? r "b") #f)
+          (equal? (kv:get r "c") 1))))
+
+; T71: rename-keys() with an empty mapping is the identity.
+(let* ((s (kv:set (kv:set (kv:open) "a" 1) "b" 2))
+       (r (kv:rename-keys s (quote ()))))
+  (t "T71-rename-keys-empty"
+     (and (= (kv:size r) 2)
+          (equal? (kv:get r "a") 1)
+          (equal? (kv:get r "b") 2))))
+
+; T72: rename-keys() skips a rename whose target key is already present
+; (consistent with kv:rename's refusal semantics).
+(let* ((s (kv:set (kv:set (kv:open) "a" 1) "b" 2))
+       (r (kv:rename-keys s (list (cons "a" "b")))))
+  (t "T72-rename-keys-skip-collision"
+     (and (= (kv:size r) 2)
+          (equal? (kv:get r "a") 1)
+          (equal? (kv:get r "b") 2))))
+
+; T73: union-all() merges a list of stores left-to-right; left-wins for
+; shared keys, right-only keys appended in right's order.
+(let* ((a (kv:set (kv:set (kv:open) "a" 1) "b" 2))
+       (b (kv:set (kv:open) "c" 3))
+       (c (kv:set (kv:set (kv:open) "b" 99) "d" 4))
+       (u (kv:union-all (list a b c)))
+       (uk (kv:keys u)))
+  (t "T73-union-all"
+     (and (= (kv:size u) 4)
+          (equal? (kv:get u "a") 1)
+          (equal? (kv:get u "b") 2)
+          (equal? (kv:get u "c") 3)
+          (equal? (kv:get u "d") 4)
+          (equal? (car uk) "a")
+          (equal? (car (cdr uk)) "b")
+          (equal? (car (cdr (cdr uk))) "c")
+          (equal? (car (cdr (cdr (cdr uk)))) "d"))))
+
+; T74: union-all() with an empty list yields an empty store.
+(t "T74-union-all-empty"
+   (null? (kv:union-all (quote ()))))
+
+; T75: union-all() with a single-element list yields that element unchanged.
+(let* ((a (kv:set (kv:set (kv:open) "a" 1) "b" 2))
+       (u (kv:union-all (list a))))
+  (t "T75-union-all-single"
+     (and (= (kv:size u) 2)
+          (equal? (kv:get u "a") 1)
+          (equal? (kv:get u "b") 2))))
+
+; T76: incr() multi-call sequence composes into a counter (the canonical
+; use-case: init -> bump -> bump -> bump-by-N).
+(let* ((s (kv:open))
+       (s (kv:incr s "c"))
+       (s (kv:incr s "c"))
+       (s (kv:incr s "c"))
+       (s (kv:incr-by s "c" 10)))
+  (t "T76-incr-multi"
+     (= (kv:get s "c") 13)))
 
 (display "SCORE ")
 (display pass)

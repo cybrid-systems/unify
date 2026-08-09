@@ -1,23 +1,24 @@
 # Controller REVIEW
 
-- **Strengths**: 85/85 tests green across Phases 0–11 of the in-file roadmap. Alist-of-cons representation is robust (defensive skipping of stray non-pair cells), insertion order is preserved by every op, every op is pure functional, no FS / network / host escape used. Export-before-define discipline intact, API names stable since v1, `kv:pick` walks the *store*, `kv:rename`/`kv:swap` consistently refuse ambiguous writes, `kv:equal?` correctly distinguishes `#f` values from misses, stats ops (min/max/product/avg) compose cleanly with `kv:merge`, and the relational algebra (intersection / subtract / disjoint? / subset?) is solid.
-- **Gap (Phase 12 candidate)**: The relational algebra over stores is missing two natural operations — **`kv:union`** (set union, right-wins on conflict, the missing "merge" with set-theoretic naming) and **`kv:symmetric-difference`** (XOR — keys in either but not both, the missing fourth binary set op to pair with intersection / subtract).
-- **Gap (Phase 12 candidate)**: The positional family (first / last / rest / butlast / take / drop) is missing a structural **`kv:reverse`** to flip insertion order — useful for LIFO traversal and reverse-ordered views.
-- **Gap (Phase 12 candidate)**: The statistical family (min / max / sum / product / avg) is missing **`kv:frequencies`** — a value → count alist in first-occurrence order, a common pure-functional building block.
-- All four additions derive from existing `_fold` / `_set` / `_has` primitives; one new internal helper (`kv:_bump`) is added but not exported; no FS escape; no API renames; no existing op is touched.
+- **Strengths**: 97/97 tests green across Phases 0–12 of the in-file roadmap. Alist-of-cons representation is robust (defensive skipping of stray non-pair cells), insertion order is preserved by every op, every op is pure functional, no FS / network / host escape used. Export-before-define discipline intact, API names stable since v1, `kv:pick` walks the *store*, `kv:rename`/`kv:swap` consistently refuse ambiguous writes, `kv:equal?` correctly distinguishes `#f` values from misses, stats ops compose cleanly with `kv:merge`, relational algebra is closed (union / intersection / subtract / symmetric-difference), and value-classification (`kv:frequencies`) lands the last natural extension.
+- **Failures / Risks**: SCORE is full → per protocol, must advance SPEC phase by introducing new capability that keeps old tests green. The lib's roadmap comment block stops at Phase 12; adding Phase 13 is the natural progression. No host / FS / network concerns to mitigate.
+- **Density**: Every existing op derives from `kv:_fold` / `kv:_set` / `kv:_has` / `kv:_ref` / `kv:_map` — new ops should follow the same pattern (single fold, no FS escapes, no new internal helper unless unavoidable).
 
 # DIRECTION
 
-- **Target phase: Phase 12 — completion of relational algebra + value-classification helpers.** Same posture as Phase 11 (pure Aura, derived from existing alist primitives, insertion order of LEFT operand preserved, no FS escapes, no API renames, no exports removed). Keeps all T1–T57 green.
-- **Ops to add (4 new, all pure, all derive from existing internals; export-before-define preserved):**
-  - `kv:union` — `(a b)` set union; a's order for shared keys, b-only keys appended in b's order. Closes the relational algebra with explicit set-theoretic naming.
-  - `kv:symmetric-difference` — `(a b)` XOR; returns `(left-only . right-only)` pair of stores. Closes the relational algebra (union / intersection / subtract / XOR).
-  - `kv:reverse` — `(store)` reverse insertion order. Complements the positional family.
-  - `kv:frequencies` — `(store)` value → count alist in first-occurrence order. New statistical helper.
-- One new internal helper: `kv:_bump` (not exported) — bump-a-key-in-an-alist-of-counters, used by `kv:frequencies`.
-- Bump `kv:version` to `12`. Extend `tests/smoke.aura` with **T58–T61c** (12 new tests; total → 97).
-
-**DO NOT TOUCH:**
-- Existing exports, function definitions, or the alist-of-cons representation.
-- Export-before-define discipline or API names.
-- Any existing test.
+- **Target phase: Phase 13 — numeric / bulk-composition helpers.** Same posture as Phase 12 (pure Aura, derived from existing alist primitives, insertion order preserved by construction, no FS escapes, no API renames, no exports removed). Keeps all T1–T61c green.
+- **Ops to add (6 new, all pure, all derive from existing internals; export-before-define preserved):**
+  - `kv:incr`     — `(store key)` → store; increment by 1; creates slot with 1 on miss
+  - `kv:incr-by`  — `(store key amount)` → store; increment by amount; refuses non-numeric amount / non-string key
+  - `kv:decr`     — `(store key)` → store; decrement by 1
+  - `kv:decr-by`  — `(store key amount)` → store; decrement by amount
+  - `kv:rename-keys` — `(store mapping)` → store; folds `(kv:rename store old new)` left-to-right over `(old . new)` pairs; chained renames supported (later entries can pick up earlier renames); skips non-pair cells
+  - `kv:union-all` — `(stores)` → store; left-to-right `kv:union` over a list of stores; `()` yields `()`; singleton yields that element
+- **Implementation notes**:
+  - Use a single internal `kv:_incr` helper for all four incr/decr ops (mirroring how `kv:_ref` / `kv:_has` / `kv:_set` are reused).
+  - Refuse non-numeric `amount` AND non-string `key` (return store unchanged) — same defensive posture as `kv:set`'s string?-key guard.
+  - Missing key OR non-numeric existing value → write `amount` as the new value (init semantics; documented in comment).
+  - `kv:rename-keys` / `kv:union-all` skip non-pair cells defensively (same posture as every other op).
+  - No new internal helper beyond `kv:_incr`; reuse `kv:rename` and `kv:union` so semantics are identical.
+- **Bump `kv:version` 12 → 13**, extend `tests/smoke.aura` with **T62–T76** (15 new tests covering each new op's primary path + key refusal edges).
+- **Do NOT touch**: Phases 0–12, exports order for existing ops, header comment Phases 0–12 entries, `kv:_fold` / `kv:_set` / `kv:_has` / `kv:_ref` / `kv:_map`, journal format.

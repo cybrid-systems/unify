@@ -852,6 +852,135 @@
           (= (kv:get f 2) 1)
           (= (kv:get f 3) 1))))
 
+; ---- Phase 13: numeric / bulk-composition helpers ----
+
+; T62: incr() increments an existing numeric value by 1 and is immutable
+; on the input store.
+(let* ((s (kv:set (kv:open) "x" 5))
+       (s2 (kv:incr s "x")))
+  (t "T62-incr-basic"
+     (and (= (kv:get s2 "x") 6)
+          (equal? (kv:get s "x") 5))))
+
+; T63: incr() on a missing key creates the slot with the default delta 1.
+(let* ((s (kv:open))
+       (s (kv:incr s "new")))
+  (t "T63-incr-create"
+     (= (kv:get s "new") 1)))
+
+; T64: incr-by() with an explicit amount accumulates correctly across calls.
+(let* ((s (kv:open))
+       (s (kv:incr-by s "x" 10))
+       (s (kv:incr-by s "x" 5)))
+  (t "T64-incr-by-amount"
+     (= (kv:get s "x") 15)))
+
+; T65: incr-by() refuses a non-numeric amount (store unchanged) — protects
+; a numeric counter from a bad call.
+(let* ((s (kv:set (kv:open) "x" 5))
+       (s2 (kv:incr-by s "x" "bad")))
+  (t "T65-incr-refuse-bad-amount"
+     (equal? (kv:get s2 "x") 5)))
+
+; T66: incr-by() refuses a non-string key (store unchanged) — same
+; posture as kv:set's string?-key guard.
+(let* ((s (kv:set (kv:open) "x" 5))
+       (s2 (kv:incr-by s 'symbol 1)))
+  (t "T66-incr-refuse-bad-key"
+     (equal? (kv:get s2 "x") 5)))
+
+; T67: decr() and decr-by() compose on an existing numeric value.
+(let* ((s (kv:set (kv:open) "x" 10))
+       (s2 (kv:decr s "x"))
+       (s3 (kv:decr-by s2 "x" 3)))
+  (t "T67-decr-basic"
+     (= (kv:get s3 "x") 6)))
+
+; T68: decr-by() on a missing key creates the slot with the negated delta.
+(let* ((s (kv:open))
+       (s (kv:decr-by s "x" 5)))
+  (t "T68-decr-create"
+     (= (kv:get s "x") -5)))
+
+; T69: rename-keys() applies multiple renames sequentially and preserves
+; the rest of the store.
+(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
+       (r (kv:rename-keys s (list (cons "a" "x") (cons "b" "y")))))
+  (t "T69-rename-keys"
+     (and (= (kv:size r) 3)
+          (eq? (kv:has? r "a") #f)
+          (eq? (kv:has? r "b") #f)
+          (equal? (kv:get r "x") 1)
+          (equal? (kv:get r "y") 2)
+          (equal? (kv:get r "c") 3))))
+
+; T70: rename-keys() chained renames — a rename introduced by an earlier
+; pair is picked up by a later pair (the "a"->"b"->"c" path).
+(let* ((s (kv:set (kv:open) "a" 1))
+       (r (kv:rename-keys s (list (cons "a" "b") (cons "b" "c")))))
+  (t "T70-rename-keys-chained"
+     (and (= (kv:size r) 1)
+          (eq? (kv:has? r "a") #f)
+          (eq? (kv:has? r "b") #f)
+          (equal? (kv:get r "c") 1))))
+
+; T71: rename-keys() with an empty mapping is the identity.
+(let* ((s (kv:set (kv:set (kv:open) "a" 1) "b" 2))
+       (r (kv:rename-keys s (quote ()))))
+  (t "T71-rename-keys-empty"
+     (and (= (kv:size r) 2)
+          (equal? (kv:get r "a") 1)
+          (equal? (kv:get r "b") 2))))
+
+; T72: rename-keys() skips a rename whose target key is already present
+; (consistent with kv:rename's refusal semantics).
+(let* ((s (kv:set (kv:set (kv:open) "a" 1) "b" 2))
+       (r (kv:rename-keys s (list (cons "a" "b")))))
+  (t "T72-rename-keys-skip-collision"
+     (and (= (kv:size r) 2)
+          (equal? (kv:get r "a") 1)
+          (equal? (kv:get r "b") 2))))
+
+; T73: union-all() merges a list of stores left-to-right; left-wins for
+; shared keys, right-only keys appended in right's order.
+(let* ((a (kv:set (kv:set (kv:open) "a" 1) "b" 2))
+       (b (kv:set (kv:open) "c" 3))
+       (c (kv:set (kv:set (kv:open) "b" 99) "d" 4))
+       (u (kv:union-all (list a b c)))
+       (uk (kv:keys u)))
+  (t "T73-union-all"
+     (and (= (kv:size u) 4)
+          (equal? (kv:get u "a") 1)
+          (equal? (kv:get u "b") 2)
+          (equal? (kv:get u "c") 3)
+          (equal? (kv:get u "d") 4)
+          (equal? (car uk) "a")
+          (equal? (car (cdr uk)) "b")
+          (equal? (car (cdr (cdr uk))) "c")
+          (equal? (car (cdr (cdr (cdr uk)))) "d"))))
+
+; T74: union-all() with an empty list yields an empty store.
+(t "T74-union-all-empty"
+   (null? (kv:union-all (quote ()))))
+
+; T75: union-all() with a single-element list yields that element unchanged.
+(let* ((a (kv:set (kv:set (kv:open) "a" 1) "b" 2))
+       (u (kv:union-all (list a))))
+  (t "T75-union-all-single"
+     (and (= (kv:size u) 2)
+          (equal? (kv:get u "a") 1)
+          (equal? (kv:get u "b") 2))))
+
+; T76: incr() multi-call sequence composes into a counter (the canonical
+; use-case: init -> bump -> bump -> bump-by-N).
+(let* ((s (kv:open))
+       (s (kv:incr s "c"))
+       (s (kv:incr s "c"))
+       (s (kv:incr s "c"))
+       (s (kv:incr-by s "c" 10)))
+  (t "T76-incr-multi"
+     (= (kv:get s "c") 13)))
+
 (display "SCORE ")
 (display pass)
 (display "/")

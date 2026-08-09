@@ -19,6 +19,8 @@
 ;             (intersection, subtract, disjoint?, subset?).
 ; Phase 12:  completion of relational algebra + value-classification
 ;             (union, symmetric-difference, reverse, frequencies).
+; Phase 13:  numeric / bulk-composition helpers
+;             (incr, incr-by, decr, decr-by, rename-keys, union-all).
 ;
 ; Store representation: alist of (key . val) pairs.
 ;   * Keys are strings.
@@ -84,9 +86,15 @@
         kv:union
         kv:symmetric-difference
         kv:reverse
-        kv:frequencies)
+        kv:frequencies
+        kv:incr
+        kv:incr-by
+        kv:decr
+        kv:decr-by
+        kv:rename-keys
+        kv:union-all)
 
-(define kv:version 12)
+(define kv:version 13)
 
 ; ---------------------------------------------------------------------------
 ; Internal alist primitives.
@@ -956,3 +964,137 @@
 (define (kv:frequencies store)
   (kv:_fold store (quote ())
     (lambda (k v acc) (kv:_bump acc v))))
+
+; ---------------------------------------------------------------------------
+; Phase 13 numeric / bulk-composition helpers.
+; Pure functional; insertion order preserved by construction; no FS
+; escapes; no API renames; no exports removed. All derive from the
+; existing alist primitives (`_set`, `_ref`, `_has`) and from the
+; Phase 7 / Phase 11 / Phase 12 public ops (`kv:rename`, `kv:union`)
+; — no new internal helper beyond `kv:_incr`.
+;
+; Conventions:
+;   * `kv:incr` / `kv:decr` (and their `-by` variants) only operate
+;     on numeric values. The numeric check is applied to BOTH the
+;     existing slot (when present) AND the `amount` argument:
+;       - `amount` non-numeric → refuse (store unchanged; protects
+;         a counter from being clobbered by a bad call).
+;       - `key` non-string      → refuse (store unchanged; same
+;         posture as `kv:set` refusing non-string keys).
+;       - `key` missing OR present with a non-numeric value → write
+;         `amount` as the new value (init semantics; makes the ops
+;         safe to use on a fresh slot and consistent with how a
+;         user typically wants a counter to start).
+;       - `key` present with a numeric value → add `amount` to it.
+;     A stored `#f` value is "non-numeric" under number?, so the
+;     third rule above applies — `(kv:incr s "k")` on a slot whose
+;     value is `#f` will OVERWRITE `#f` with `1`. This is documented
+;     in the kv:incr comment and is the deliberate "init semantics"
+;     choice (consistent with how counters are used in practice).
+;   * `kv:rename-keys` folds `mapping` left-to-right and applies
+;     `kv:rename` for each `(old . new)` pair. Each rename inherits
+;     `kv:rename`'s refusal semantics (no-op on missing source or
+;     existing target). Sequential application is deliberate: a
+;     rename introduced by an earlier pair can be picked up by a
+;     later pair, supporting chained renames such as
+;     `(("a" . "b") ("b" . "c"))` turning `"a"` into `"c"` via the
+;     intermediate `"b"`. Non-pair cells in `mapping` are skipped
+;     defensively, same posture as every other op.
+;   * `kv:union-all` is a left fold over `kv:union`. Empty list
+;     yields `()`; single-element list yields that element unchanged.
+;     The order of the result tracks the left-to-right union chain —
+;     consistent with how `kv:union` itself orders shared keys
+;     (left-wins) and appends right-only keys (right's order). Direct
+;     loop rather than `kv:_fold` because the unit of iteration is a
+;     whole store, not a (k . v) pair — re-using `_fold` would
+;     pretend each store is an alist of `(store-cell . store)` pairs,
+;     which is the wrong shape.
+; ---------------------------------------------------------------------------
+
+; (kv:_incr store key amount) -> store.
+; Internal helper shared by `kv:incr` / `kv:incr-by` / `kv:decr` /
+; `kv:decr-by`. Returns `store` unchanged when `amount` is not a
+; number (defensive: refuse to corrupt a counter with a bad delta)
+; or when `key` is not a string (same posture as `kv:set`'s
+; string?-key guard). Otherwise computes the new value at `key`:
+; if the slot holds a number, add `amount`; if the slot is missing
+; OR holds a non-numeric value, write `amount` as the new value
+; (init semantics — the slot was not a usable counter yet). Uses
+; `kv:_set` directly (bypassing the public `kv:set` guard) because
+; the check above has already validated `key`.
+(define (kv:_incr store key amount)
+  (if (and (number? amount) (string? key))
+    (let ((current (kv:_ref store key)))
+      (kv:_set store key
+        (if (number? current)
+          (+ current amount)
+          amount)))
+    store))
+
+; (kv:incr store key) -> store.
+; Increments the value at `key` by 1. Creates `key` with value 1
+; when missing or holding a non-numeric value (init semantics; see
+; `kv:_incr`). The two-argument fixed form means the only failure
+; mode at this entry point is a non-string `key` (store unchanged).
+; For variable deltas, use `kv:incr-by`.
+(define (kv:incr store key)
+  (kv:_incr store key 1))
+
+; (kv:incr-by store key amount) -> store.
+; Increments the value at `key` by `amount`. Creates `key` with
+; value `amount` when missing or holding a non-numeric value. Refuses
+; non-numeric `amount` (store unchanged — never silently write
+; something that isn't a number into a numeric counter) and
+; non-string `key` (same posture as `kv:set`).
+(define (kv:incr-by store key amount)
+  (kv:_incr store key amount))
+
+; (kv:decr store key) -> store.
+; Decrements the value at `key` by 1. Same semantics as `kv:incr`
+; with `amount = -1`. Creates `key` with value -1 when missing or
+; holding a non-numeric value.
+(define (kv:decr store key)
+  (kv:_incr store key -1))
+
+; (kv:decr-by store key amount) -> store.
+; Decrements the value at `key` by `amount`. Same semantics as
+; `kv:incr-by` with negated amount. Refuses non-numeric `amount`
+; and non-string `key`.
+(define (kv:decr-by store key amount)
+  (kv:_incr store key (- amount)))
+
+; (kv:rename-keys store mapping) -> store.
+; Apply `(kv:rename store old new)` for each `(old . new)` pair in
+; `mapping`, sequentially. Each rename inherits `kv:rename`'s refusal
+; semantics (no-op when `old` is absent or `new` is already present).
+; Reading `mapping` left-to-right means a rename introduced by an
+; earlier pair can be picked up by a later pair — useful for chained
+; renames (e.g. `(("a" . "b") ("b" . "c"))` maps `"a"` to `"c"` via
+; the intermediate `"b"`). Non-pair cells in `mapping` are skipped
+; defensively, same posture as every other op. Empty `mapping` is
+; the identity. Returns the (possibly identical) store.
+(define (kv:rename-keys store mapping)
+  (let loop ((xs mapping) (acc store))
+    (if (null? xs)
+      acc
+      (let ((p (car xs)))
+        (if (pair? p)
+          (loop (cdr xs) (kv:rename acc (car p) (cdr p)))
+          (loop (cdr xs) acc))))))
+
+; (kv:union-all stores) -> store.
+; Left-to-right union of a list of stores. Empty list yields `()`;
+; single-element list yields that element unchanged. Implemented as
+; a direct loop that accumulates `(kv:union acc store)` for each
+; `store` in the list — `kv:union` already gives the left-wins /
+; right-appends ordering, and chaining it across a list is the
+; natural composition. Non-pair cells in `stores` are skipped
+; defensively (a stray cell cannot crash the reducer). No FS escapes.
+(define (kv:union-all stores)
+  (let loop ((xs stores) (acc (quote ())))
+    (if (null? xs)
+      acc
+      (let ((s (car xs)))
+        (if (pair? s)
+          (loop (cdr xs) (kv:union acc s))
+          (loop (cdr xs) acc))))))
