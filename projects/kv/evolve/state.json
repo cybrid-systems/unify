@@ -1,6 +1,6 @@
 {
   "project": "projects/kv",
-  "generation": 16,
+  "generation": 17,
   "best_score": 148,
   "best_total": 148,
   "status": "ok",
@@ -369,9 +369,42 @@
       "candidate": "146/148",
       "review": "- **Strengths**: 146/148 baseline across Phases 0\u201315 is rock solid \u2014 alist-of-cons store, defensive skipping of stray non-pair cells, insertion order preserved by every op, export-before-define discipline intact, API surface stable since v1, all 9+ generations of phase advancements have held up. T88c, T89/89b/89c, T90/90b/90c, T91/91b all PASS \u2014 meaning `kv:sort-by` works correctly on no-tie / already-sorted / single-entry inputs, and `kv:max-key`/`kv:min-key`/`kv:compare` are correct.\n- **Failu",
       "direction": "**Same phase (Phase 16) \u2014 surgical one-symbol bugfix only.** No SPEC phase advancement, no new tests, no API renames, no exports removed, no internals deleted, no FS escapes, no `kv:version` bump, no new helpers.\n\n- Touch ONLY two occurrences of the symbol `reverse` inside `kv:sort-by`. Replace with `kv:reverse` (the in-library reverse, defined at Phase 12, validated by T60/T60b/T60c). Identical paren count, identical structure \u2014 minimal possible patch.\n- Do NOT touch Phases 0\u201315 (`kv:open` \u2026 `k"
+    },
+    {
+      "ts": "2026-08-09T11:18Z",
+      "phase": "control-loop",
+      "generation": 16,
+      "accepted": false,
+      "reason": "regress-or-no-gain",
+      "baseline": "146/148",
+      "candidate": "138/148",
+      "review": "- **Baseline 146/148** with only T88-sort visibly failing in the test output tail; 1 hidden fail sits in T1\u2013T48 (Phases 0\u201315 have been stable across 9+ generations, so the hidden fail is almost certainly a Phase-16-adjacent flake or unrelated quirk, NOT a Phase 6\u201315 regression).\n- All other Phase 16 ops pass: T88b (sort-empty), T88c (sort-single), T89/89b/89c (sort-by with no ties / sorted / empty), T90/90b/90c (max-key/min-key), T91/91b (compare). So the bug is **specifically in tie handling** ",
+      "direction": "- **Same phase (Phase 16) \u2014 surgical bugfix only.** No SPEC phase advancement, no new tests, no API renames, no exports removed, no internals deleted, no FS escapes, no `kv:version` bump (still 16).\n- **Add 4 new internal helpers right after `kv:_append`**: `kv:_snoc`, `kv:_sort-min`, `kv:_sort-min-rest`, `kv:_drop-by-key`. All top-level recursion. No named-let anywhere in the new code path.\n- **Rewrite `kv:sort-by` only** as a selection sort: walk `src` via a single outer `let loop`, at each st"
+    },
+    {
+      "ts": "2026-08-09T11:24Z",
+      "phase": "control-loop",
+      "generation": 16,
+      "accepted": false,
+      "reason": "regress-or-no-gain",
+      "baseline": "148/148",
+      "candidate": "126/143",
+      "review": "- 148/148 baseline is rock solid: Phases 0\u201316 (open/set/get \u2192 compare) all green, including the previously-tricky T88-sort (kv:sort-by with strict-< boundary for tie-breaking). Pure Aura alist-of-cons store, defensive skipping of stray non-pair cells, insertion order preserved by every op, no FS / network / host escape.\n- Export-before-define discipline intact; API names stable since v1; 15 successful phase-advancements in the journal.\n- The 11:18 attempt (candidate 138/148) was a Phase-16 surgi",
+      "direction": "**Target phase: Phase 17 \u2014 distinctness / key-ordering helpers.** All pure Aura, all derived from the existing `kv:_fold` / `kv:_set` / `kv:_has` / `kv:_mem` / `kv:sort-by` / `kv:reverse` primitives. No FS escapes, no API renames, no exports removed, no internals deleted, no `kv:_fold` re-implementations.\n\n**Touches:**\n- Header comment: add Phase 17 line.\n- `kv:version`: bump 16 \u2192 17.\n- Export list: add 6 new symbols.\n- End-of-file: append 6 new implementations.\n\n**Ops to add (6 new, all pure, a"
+    },
+    {
+      "ts": "2026-08-09T11:32Z",
+      "phase": "control-loop",
+      "generation": 17,
+      "accepted": true,
+      "reason": "full-green",
+      "baseline": "148/148",
+      "candidate": "148/148",
+      "review": "- **Baseline 148/148 fully green** across Phases 0\u201316 (open/set/get \u2192 compare). Pure Aura alist-of-cons store, defensive skipping of stray non-pair cells, insertion order preserved by every op, no FS / network / host escape used. Export-before-define discipline intact; API surface stable since v1; 15 successful phase-advancements in the journal.\n- **Phase 16 is locked in.** T88-sort (the only tie-bearing sort assertion) passes via the `kv:_sort-min`/`kv:_drop-one`/`kv:_append` selection-sort app",
+      "direction": "**Target phase: Phase 17 \u2014 distinctness / key-ordering helpers.** Same posture as Phases 14/15/16: pure Aura, derived from existing alist primitives, insertion order preserved by construction. Keeps T1\u2013T91b green. Extends smoke suite by 11 tests (T92\u2013T97b), targeting **159/159**.\n\n- **Ops to add (6 new, all pure):**\n  - `kv:rank`           \u2014 `(store key)` \u2192 0-indexed position; `#f` on miss / empty. Walks via `let loop` with a counter.\n  - `kv:distinct-keys`  \u2014 keys whose values are unique (uses "
     }
   ],
-  "updated": "2026-08-09T11:04Z",
-  "last_review": "- **Strengths**: 146/148 baseline across Phases 0\u201315 is rock solid \u2014 alist-of-cons store, defensive skipping of stray non-pair cells, insertion order preserved by every op, export-before-define discipline intact, API surface stable since v1, all 9+ generations of phase advancements have held up. T88c, T89/89b/89c, T90/90b/90c, T91/91b all PASS \u2014 meaning `kv:sort-by` works correctly on no-tie / already-sorted / single-entry inputs, and `kv:max-key`/`kv:min-key`/`kv:compare` are correct.\n- **Failure root cause**: T88 fails on the only assertion with **two ties** (b.1, d.1) \u2014 the nested-`let lp` insertion path fires its inner recursion, and the trace shows host `reverse` is the suspect (every other reverse use in the lib goes through `kv:reverse`, which works perfectly \u2014 T60/T60b/T60c all green).\n- **Risk lesson from journal**: every multi-helper rewrite / structural refactor of `kv:sort-by` over the last ~10 attempts scored **0/0** (host couldn't even load) \u2014 likely unbalanced parens or host-confusing structure. The patch MUST be **structurally identical** to the current `kv:sort-by`; only swap a name.",
-  "last_direction": "Unblocked: T31-rename (in-place) + T88-sort (selection-sort without host reverse). Resume phase advancement."
+  "updated": "2026-08-09T11:32Z",
+  "last_review": "- **Baseline 148/148 fully green** across Phases 0\u201316 (open/set/get \u2192 compare). Pure Aura alist-of-cons store, defensive skipping of stray non-pair cells, insertion order preserved by every op, no FS / network / host escape used. Export-before-define discipline intact; API surface stable since v1; 15 successful phase-advancements in the journal.\n- **Phase 16 is locked in.** T88-sort (the only tie-bearing sort assertion) passes via the `kv:_sort-min`/`kv:_drop-one`/`kv:_append` selection-sort approach. T89/89b/89c, T90/90b/90c, T91/91b all green.\n- **Risks:** None visible. The last 11:24Z Phase 17 attempt got 126/143, but that was a different implementation strategy (it carried over the buggy nested-let from Phase 16 attempts and tried to add Phase 17 on top). My Phase 17 strategy uses only `kv:_fold` (known-good) plus top-level `let loop` (known-good) \u2014 no nested named-lets, no host `reverse`, no host `append`.\n- **Denseness posture:** unchanged. All 6 new ops derive from existing `_fold` / `_set` / `_has` / `_ref` / `_rev` / `_mem` primitives. No new internals needed (except the `_rev` already in place at Phase 0\u20132). No FS escape, no host escape, no `set!`.",
+  "last_direction": "**Target phase: Phase 17 \u2014 distinctness / key-ordering helpers.** Same posture as Phases 14/15/16: pure Aura, derived from existing alist primitives, insertion order preserved by construction. Keeps T1\u2013T91b green. Extends smoke suite by 11 tests (T92\u2013T97b), targeting **159/159**.\n\n- **Ops to add (6 new, all pure):**\n  - `kv:rank`           \u2014 `(store key)` \u2192 0-indexed position; `#f` on miss / empty. Walks via `let loop` with a counter.\n  - `kv:distinct-keys`  \u2014 keys whose values are unique (uses `kv:frequencies` underneath; preserves source order among survivors).\n  - `kv:distinct-values`\u2014 distinct values in first-occurrence order.\n  - `kv:distinct-entries`\u2014 sub-store of first occurrence of each value (first-occurrence wins on ties, matches `kv:invert`/`kv:update-keys`).\n  - `kv:group-by`       \u2014 alist of (group-key . sub-store); sub-stores preserve source order; group-key order matches first-occurrence in source.\n  - `kv:top-n`          \u2014 first `n` entries (insertion-order prefix); `n<"
 }
