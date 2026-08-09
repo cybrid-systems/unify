@@ -7,3 +7,4 @@
 {"ts": "2026-08-09T04:05Z", "from_generation": 6, "to_generation": 7, "factor": 15, "body": "(lambda (x) (* x 15))", "decision": "select", "candidates_tried": 1, "candidates_n": 1, "mode": "multi-sandbox-select"}
 {"ts": "2026-08-09T04:06Z", "from_generation": 7, "to_generation": 8, "factor": 17, "body": "(lambda (x) (* x 17))", "decision": "select", "candidates_tried": 1, "candidates_n": 1, "mode": "multi-sandbox-select"}
 {"ts": "2026-08-09T04:07Z", "from_generation": 8, "to_generation": 9, "factor": 19, "body": "(lambda (x) (* x 19))", "decision": "select", "candidates_tried": 1, "candidates_n": 1, "mode": "multi-sandbox-select"}
+{"ts": "2026-08-09T04:08Z", "from_generation": 9, "to_generation": 10, "factor": 21, "body": "(lambda (x) (* x 21))", "decision": "select", "candidates_tried": 1, "candidates_n": 1, "mode": "multi-sandbox-select"}

@@ -2,10 +2,10 @@
 
 | field | value |
 |-------|-------|
-| updated | 2026-08-09T04:07Z |
-| generation | 9 |
-| factor | 19 |
-| body | `(lambda (x) (* x 19))` |
+| updated | 2026-08-09T04:08Z |
+| generation | 10 |
+| factor | 21 |
+| body | `(lambda (x) (* x 21))` |
 | decision | select |
 | mode | multi-sandbox-select (query→mutate, K candidates) |
 
