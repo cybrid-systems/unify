@@ -6,6 +6,8 @@
 ;             empty?, for-each).
 ; Phase 6:   fold / predicate / projection / selection helpers
 ;             (reduce, any?, every?, pick, omit, map-values).
+; Phase 7:   convenience / comparison helpers
+;             (get-or, rename, diff, partition, equal?).
 ;
 ; Store representation: alist of (key . val) pairs.
 ;   * Keys are strings.
@@ -41,9 +43,14 @@
         kv:every?
         kv:pick
         kv:omit
-        kv:map-values)
+        kv:map-values
+        kv:get-or
+        kv:rename
+        kv:diff
+        kv:partition
+        kv:equal?)
 
-(define kv:version 5)
+(define kv:version 6)
 
 ; ---------------------------------------------------------------------------
 ; Internal alist primitives.
@@ -304,3 +311,108 @@
 (define (kv:map-values store proc)
   (kv:_fold store (quote ())
     (lambda (k v acc) (kv:_set acc k (proc v)))))
+
+; ---------------------------------------------------------------------------
+; Phase 7 convenience / comparison helpers.
+; All pure functional, derived from the existing internals; no FS
+; escapes; insertion order preserved by construction.
+; ---------------------------------------------------------------------------
+
+; (kv:get-or store key default) -> value | default.
+; Returns the stored value when `key` is present (even if that value is
+; literally #f), and `default` otherwise. Implemented via kv:_has so a
+; stored #f is distinguishable from a missing key — documented
+; improvement over the raw kv:get / #f-as-miss convention.
+(define (kv:get-or store key default)
+  (if (kv:_has store key)
+    (kv:_ref store key)
+    default))
+
+; (kv:rename store old-key new-key) -> store.
+; Atomically replaces `old-key` with `new-key`, preserving the original
+; insertion position (substituted in place) and keeping every other
+; entry's value + order untouched. No-op when:
+;   * `old-key` is not in `store`, or
+;   * `new-key` is already present (the operation is ambiguous and the
+;     caller would have to choose between overwriting `new-key` and
+;     losing the rename target — refusing is the only safe choice).
+; Note: rename with old-key == new-key is also a no-op by virtue of the
+; second rule above.
+(define (kv:rename store old-key new-key)
+  (if (not (kv:_has store old-key))
+    store
+    (if (kv:_has store new-key)
+      store
+      (kv:_fold store (quote ())
+        (lambda (k v acc)
+          (if (equal? k old-key)
+            (kv:_set acc new-key v)
+            (kv:_set acc k v)))))))
+
+; (kv:diff a b) -> (added removed changed).
+; Three sub-stores describing the set-theoretic / value-level differences
+; from a -> b:
+;   * added   — keys present in b but not in a, with b's values.
+;   * removed — keys present in a but not in b, with a's values.
+;   * changed — keys present in both, with values that differ; entries
+;               are stored as (k . (old-val . new-val)) so the consumer
+;               can distinguish "value changed" from "key added".
+; Iteration order of each sub-store follows the source it was derived
+; from (added/removed follow their respective stores; changed follows
+; `a`). No FS, no mutation.
+(define (kv:diff a b)
+  (let* ((added
+           (kv:_fold b (quote ())
+             (lambda (k v acc)
+               (if (kv:_has a k)
+                 acc
+                 (kv:_set acc k v)))))
+         (removed
+           (kv:_fold a (quote ())
+             (lambda (k v acc)
+               (if (kv:_has b k)
+                 acc
+                 (kv:_set acc k v)))))
+         (changed
+           (kv:_fold a (quote ())
+             (lambda (k va acc)
+               (if (kv:_has b k)
+                 (let ((vb (kv:_ref b k)))
+                   (if (equal? va vb)
+                     acc
+                     (kv:_set acc k (cons va vb))))
+                 acc)))))
+    (list added removed changed)))
+
+; (kv:partition store proc) -> (match . nomatch).
+; Two stores: the entries for which (proc k v) is #t and those for which
+; it is #f. Both sub-stores preserve the original insertion order
+; among their respective survivors. An empty store yields ((() . ())).
+(define (kv:partition store proc)
+  (kv:_fold store (list (quote ()) (quote ()))
+    (lambda (k v acc)
+      (let ((m (car acc))
+            (n (car (cdr acc))))
+        (if (proc k v)
+          (list (kv:_set m k v) n)
+          (list m (kv:_set n k v)))))))
+
+; (kv:equal? a b) -> #t | #f.
+; Deep structural equality of two stores, ignoring insertion order.
+; First checks sizes; then iterates the keys of `a` and verifies each
+; one is present in `b` with a structurally equal value. Symmetric in
+; practice (same key multiset + same per-key values).
+; Note: a stored #f value compares equal to a missing key under a naive
+; implementation; kv:_has is used to keep the check honest.
+(define (kv:equal? a b)
+  (if (= (kv:size a) (kv:size b))
+    (let loop ((xs (kv:keys a)))
+      (if (null? xs)
+        #t
+        (let ((k (car xs)))
+          (if (kv:_has b k)
+            (if (equal? (kv:_ref a k) (kv:_ref b k))
+              (loop (cdr xs))
+              #f)
+            #f))))
+    #f))

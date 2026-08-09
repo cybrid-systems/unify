@@ -254,6 +254,108 @@
           (equal? (car (cdr mk)) "b")
           (equal? (car (cdr (cdr mk))) "c"))))
 
+; ---- Phase 7: convenience / comparison helpers ----
+
+; T30: get-or() returns the stored value, or default on miss.
+(let* ((s (kv:set (kv:set (kv:open) "a" 1) "b" 2)))
+  (t "T30-get-or"
+     (and (= (kv:get-or s "a" 99) 1)
+          (= (kv:get-or s "missing" 42) 42)
+          (= (kv:get-or (kv:open) "anything" 7) 7))))
+
+; T30b: get-or() must return the stored value even when that value is #f.
+(t "T30b-get-or-false"
+   (equal? (kv:get-or (kv:set (kv:open) "k" #f) "k" "fallback") #f))
+
+; T31: rename() replaces a key in place, preserving position and other entries.
+(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
+       (r (kv:rename s "b" "bb"))
+       (rk (kv:keys r)))
+  (t "T31-rename"
+     (and (= (kv:size r) 3)
+          (eq? (kv:has? r "b") #f)
+          (equal? (kv:get r "bb") 2)
+          (equal? (kv:get r "a") 1)
+          (equal? (kv:get r "c") 3)
+          (equal? (car rk) "a")
+          (equal? (car (cdr rk)) "bb")
+          (equal? (car (cdr (cdr rk))) "c"))))
+
+; T31b: rename() is a no-op when the old key is absent.
+(t "T31b-rename-noop-missing"
+   (let* ((s (kv:set (kv:open) "a" 1))
+          (r (kv:rename s "ghost" "new")))
+     (and (= (kv:size r) 1)
+          (equal? (kv:get r "a") 1)
+          (eq? (kv:has? r "new") #f))))
+
+; T31c: rename() is a no-op when the new key is already present.
+(t "T31c-rename-noop-exists"
+   (let* ((s (kv:set (kv:set (kv:open) "a" 1) "b" 2))
+          (r (kv:rename s "a" "b")))
+     (and (= (kv:size r) 2)
+          (equal? (kv:get r "a") 1)
+          (equal? (kv:get r "b") 2))))
+
+; T32: diff() classifies entries into added / removed / changed.
+(let* ((a (kv:set (kv:set (kv:set (kv:open) "x" 1) "y" 2) "z" 3))
+       (b (kv:set (kv:set (kv:set (kv:open) "y" 20) "z" 3) "w" 4))
+       (d (kv:diff a b))
+       (added (car d))
+       (removed (car (cdr d)))
+       (changed (car (cdr (cdr d)))))
+  (t "T32-diff"
+     (and (= (kv:size added) 1)
+          (equal? (kv:get added "w") 4)
+          (= (kv:size removed) 1)
+          (equal? (kv:get removed "x") 1)
+          (= (kv:size changed) 1)
+          (equal? (kv:get changed "y") (cons 2 20)))))
+
+; T32b: diff() between equal stores yields three empty sub-stores.
+(let* ((d (kv:diff (kv:set (kv:set (kv:open) "a" 1) "b" 2)
+                   (kv:set (kv:set (kv:open) "b" 2) "a" 1))))
+  (t "T32b-diff-equal"
+     (and (= (kv:size (car d)) 0)
+          (= (kv:size (car (cdr d))) 0)
+          (= (kv:size (car (cdr (cdr d)))) 0))))
+
+; T33: partition() splits a store into (match . nomatch) sub-stores.
+(let* ((s (kv:set (kv:set (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3) "d" 4) "e" 5))
+       (p (kv:partition s (lambda (k v) (> v 2))))
+       (m (car p))
+       (n (car (cdr p))))
+  (t "T33-partition"
+     (and (= (kv:size m) 3)
+          (equal? (kv:get m "c") 3)
+          (equal? (kv:get m "d") 4)
+          (equal? (kv:get m "e") 5)
+          (= (kv:size n) 2)
+          (equal? (kv:get n "a") 1)
+          (equal? (kv:get n "b") 2))))
+
+; T33b: partition() on an empty store yields two empty sub-stores.
+(let* ((p (kv:partition (kv:open) (lambda (k v) #t))))
+  (t "T33b-partition-empty"
+     (and (= (kv:size (car p)) 0)
+          (= (kv:size (car (cdr p))) 0))))
+
+; T34: equal? is a structural equality ignoring insertion order.
+(let* ((a (kv:set (kv:set (kv:open) "a" 1) "b" 2))
+       (b (kv:set (kv:set (kv:open) "b" 2) "a" 1))
+       (c (kv:set (kv:set (kv:open) "a" 1) "b" 2)))
+  (t "T34-equal"
+     (and (kv:equal? a b)
+          (kv:equal? a c)
+          (not (kv:equal? a (kv:set a "c" 3)))
+          (not (kv:equal? a
+                         (kv:set (kv:set (kv:open) "a" 1) "b" 3))))))
+
+; T34b: equal? agrees on empty stores and detects size mismatches.
+(t "T34b-equal-empty"
+   (and (kv:equal? (kv:open) (kv:open))
+        (not (kv:equal? (kv:open) (kv:set (kv:open) "a" 1)))))
+
 (display "SCORE ")
 (display pass)
 (display "/")

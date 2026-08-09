@@ -1,465 +1,289 @@
-<think>We have a regression: T27-pick is failing. Let me analyze why.
+<think>The user is asking me to act as the controller of a software self-evolution loop. The current state:
 
-T27:
+- Project: kv store (Aura)
+- Generation: 6
+- Baseline SCORE: 35/35 (full green)
+- All tests T1-T29 passing
+
+The lib/kv.aura file already implements Phases 0-6 with:
+- Phase 0-2: open, set/get, del/has?/size, keys/clear
+- Phase 3: multi-key stress + isolation
+- Phase 4: batch helpers (mset, mget, update, merge, copy)
+- Phase 5: iteration/query (values, entries, filter, find, empty?, for-each)
+- Phase 6: fold/predicate/projection/selection (reduce, any?, every?, pick, omit, map-values)
+
+The kv:version is 5.
+
+Since all tests are green (35/35), I should advance the SPEC phase with new capabilities while keeping old tests green. Per the SPEC, Phase 4 says "optional: batch helpers" — and the current implementation has already gone well beyond that with Phases 5-6.
+
+Let me think about what new capabilities would be reasonable next phases for this KV store:
+
+Looking at the SPEC's evolution phases:
+- Phase 0: open + set/get ✓
+- Phase 1: del / has? / size ✓
+- Phase 2: keys / clear / overwrite ✓
+- Phase 3: multi-key stress + isolation ✓
+- Phase 4: optional batch helpers ✓
+
+The SPEC doesn't define Phase 5+ but the implementation has organically grown there. I should propose a sensible next phase.
+
+Possible next-phase ideas for a KV store in pure Aura:
+1. **Comparison / equality** — `kv:equal?` (deep structural equality of two stores)
+2. **Diff** — `kv:diff` returning added/removed/changed entries between two stores
+3. **Inversion** — `kv:invert` (swap keys and values, with collision handling)
+4. **Renaming** — `kv:rename` (rename a key)
+5. **Sorted / ordered operations** — `kv:sort-by` (returns a new store sorted by key or value)
+6. **Set operations** — `kv:intersect` (common keys), `kv:union` (already have merge), `kv:difference`
+7. **Coercion / conversion** — `kv:from-alist`, `kv:to-alist` (already have `kv:entries` which is alist)
+8. **Validation / typed values** — `kv:set-checked` with predicate, `kv:validate`
+9. **Default helpers** — `kv:get-or` (return default if missing)
+10. **Partition** — `kv:partition` (split store into two by predicate)
+
+Let me think about which would be the most natural "Phase 7" evolution. A solid pick:
+
+**Phase 7: query & transformation extensions**
+- `kv:get-or` — `(store key default)` returns default if missing
+- `kv:rename` — `(store old-key new-key)` rename a key preserving value
+- `kv:diff` — `(a b)` returns (added removed changed) where each is a sub-alist
+- `kv:partition` — `(store proc)` returns `(matching . non-matching)` pair of stores
+- `kv:equal?` — `(a b)` deep structural equality
+
+These are all natural extensions that are pure functional and useful for an actual KV store API. Let me draft them carefully.
+
+Wait — actually, since we have 35/35 green, I want to be careful. The controller directive says "If SCORE is already full, advance SPEC phase (new capability) via code that still keeps old tests green; you may also extend tests/smoke.aura carefully only if you also implement the feature."
+
+So I should:
+1. Add new functionality to lib/kv.aura (Phase 7)
+2. Extend tests/smoke.aura with new tests for the new functionality
+3. Keep all existing tests passing
+
+Let me think carefully about what to add. I want a coherent "Phase 7" with a small set of useful, well-tested additions:**
+
+Phase 7 candidates:
+- **`kv:get-or`** — `get-with-default`. Very common in real KV stores. (store key default)
+- **`kv:rename`** — atomic rename preserving value + position. Useful.
+- **`kv:diff`** — `(a b)` returns `((added (k . v) ...) (removed (k . v) ...) (changed (k . old . new) ...))` — semantically rich
+- **`kv:partition`** — split by predicate
+- **`kv:equal?`** — deep structural equality
+
+That's 5 new ops, a meaningful Phase 7.
+
+Let me think about whether these are all easy to implement correctly in pure Aura:
+
+**`kv:get-or`** — Trivial:
+```scheme
+(define (kv:get-or store key default)
+  (let ((v (kv:_ref store key)))
+    (if (eq? v #f)  ; problem: can't distinguish #f from missing
+        default
+        v)))
 ```
-(let* ((s (kv:open))
-       (s (kv:set s "a" 1))
-       (s (kv:set s "b" 2))
-       (s (kv:set s "c" 3))
-       (p (kv:pick s (list "c" "a" "ghost")))
-       (pk (kv:keys p)))
-  (t "T27-pick"
-     (and (= (kv:size p) 2)
-          (equal? (kv:get p "a") 1)
-          (equal? (kv:get p "c") 3)
-          (eq? (kv:get p "b") #f)
-          (equal? (car pk) "a")
-          (equal? (car (cdr pk)) "c"))))
-```
-
-The current implementation of `kv:pick`:
-```
-(define (kv:pick store keys)
-  (let loop ((xs keys) (acc (quote ())))
-    (if (null? xs)
-      acc
-      (let ((k (car xs)))
-        (if (kv:_has store k)
-          (loop (cdr xs) (kv:_set acc k (kv:_ref store k)))
-          (loop (cdr xs) acc))))))
-```
-
-The keys list is `("c" "a" "ghost")`. So we iterate through and set "c" first, then "a", then "ghost" (skipped). The result would be `[(a . 1), (c . 3)]`. So `(car pk)` is `"a"` and `(car (cdr pk))` is `"c"`.
-
-Wait, that seems right. Why is it failing?
-
-Oh! I bet `kv:_set` puts existing keys in place (preserving position), but when adding new keys, they are appended at the end.
-
-When we pick "c" first: acc becomes `[(c . 3)]`.
-Then pick "a": acc becomes `[(a . 1), (c . 3)]`. Good.
-Then "ghost" is skipped.
-
-So pk should be `("a" "c")` and `(car pk)` = "a", `(car (cdr pk))` = "c". That's correct!
-
-Wait, then why is the test failing? Let me look more carefully.
-
-Actually... hmm. Let me reread the test. Let me look at `kv:keys`:
-
-```
-(define (kv:keys store)
-  (kv:_map store (lambda (k v) k)))
-```
-
-And `kv:_map`:
-```
-(define (kv:_map xs f)
-  (if (null? xs)
-    (quote ())
-    (let ((p (car xs)))
-      (let ((rest (kv:_map (cdr xs) f)))
-        (if (pair? p)
-          (cons (f (car p) (cdr p)) rest)
-          rest)))))
-```
-
-This produces the keys in reverse order! Because it builds the rest first, then cons. So `(kv:keys store)` would give `("c" "b" "a")` not `("a" "b" "c")`!
-
-Wait, but T9-keys is passing:
-```
-(t "T9-keys"
-   (and (pair? ks)
-        (or (equal? (car ks) "x") (equal? (car ks) "y")
-            (and (pair? (cdr ks))
-                 (or (equal? (car (cdr ks)) "x")
-                     (equal? (car (cdr ks)) "y"))))))
-```
-
-That just checks that ks contains "x" and "y" in any position.
-
-T18 is checking `(car vs)` is 1 and `(car (cdr vs))` is 2. After setting "a"=1, "b"=2, "c"=3, the order in store should be `(("a" . 1) ("b" . 2) ("c" . 3))`. But `kv:_map` produces reverse order, so vs would be `(3 2 1)`. But T18 says `(car vs)` is 1, which would only be true if the order is preserved as `(1 2 3)`. 
-
-Hmm, T18 is passing. So `kv:values` returns `(1 2 3)`. Let me re-trace.
-
-Wait, let me re-read `kv:_map`:
-
-```
-(define (kv:_map xs f)
-  (if (null? xs)
-    (quote ())
-    (let ((p (car xs)))
-      (let ((rest (kv:_map (cdr xs) f)))
-        (if (pair? p)
-          (cons (f (car p) (cdr p)) rest)
-          rest)))))
-```
-
-If xs is `(p1 p2 p3)`, then:
-- `(kv:_map xs f)`:
-  - rest = `(kv:_map (p2 p3) f)`
-    - rest = `(kv:_map (p3) f)`
-      - rest = `(kv:_map () f)` = `()`
-      - returns `(cons (f p3) ())` = `(f p3)`
-    - returns `(cons (f p2) (f p3))` = `(f p2) (f p3)`
-  - returns `(cons (f p1) (f p2) (f p3))` = `(f p1) (f p2) (f p3)`
-
-OK so it does preserve order. I was confused. Let me re-examine.
-
-Actually my analysis was wrong because of how cons works. `(cons a (cons b (cons c '())))` produces `(a b c)`. Yes, order is preserved.
-
-So back to T27. Why is it failing?
-
-Let me re-read `kv:pick`:
-
-```
-(define (kv:pick store keys)
-  (let loop ((xs keys) (acc (quote ())))
-    (if (null? xs)
-      acc
-      (let ((k (car xs)))
-        (if (kv:_has store k)
-          (loop (cdr xs) (kv:_set acc k (kv:_ref store k)))
-          (loop (cdr xs) acc))))))
-```
-
-xs = `("c" "a" "ghost")`, store = `((a . 1) (b . 2) (c . 3))`
-
-Step 1: k = "c", _has(store, "c") = #t, so loop with acc = `[("c" . 3)]`
-Step 2: k = "a", _has(store, "a") = #t, so loop with acc = `_set([("c" . 3)], "a", 1)`
-  - `_set([("c" . 3)], "a", 1)`: car is ("c" . 3), not matching "a", so cons ("c" . 3) to `_set((), "a", 1)`
-  - `_set((), "a", 1)` = `[("a" . 1)]`
-  - Result: `[("c" . 3) ("a" . 1)]`
-Step 3: k = "ghost", _has(store, "ghost") = #f, skip.
-
-Final: `[(c . 3) (a . 1)]`.
-
-So `kv:keys p` = `("c" "a")`. `(car pk)` = `"c"`, not `"a"`. The test expects `(car pk)` = `"a"`.
-
-Ah, so the issue is that `kv:pick` iterates through `keys` in order, but appends each in insertion order. The test expects the result to preserve the original store's insertion order, not the order of the keys list.
-
-Wait, looking at the spec/test again:
-```
-(let* ((s (kv:open))
-       (s (kv:set s "a" 1))
-       (s (kv:set s "b" 2))
-       (s (kv:set s "c" 3))
-       (p (kv:pick s (list "c" "a" "ghost")))
-       (pk (kv:keys p)))
-  (t "T27-pick"
-     (and (= (kv:size p) 2)
-          (equal? (kv:get p "a") 1)
-          (equal? (kv:get p "c") 3)
-          (eq? (kv:get p "b") #f)
-          (equal? (car pk) "a")
-          (equal? (car (cdr pk)) "c"))))
-```
-
-It expects pk = `("a" "c")` — i.e., store's insertion order. So my implementation of `kv:pick` is wrong because it iterates through the keys list and inserts in iteration order, not store order.
-
-The comment I wrote says: "Insertion order of the survivors follows `store`, not the order of the input `keys` list." But the implementation doesn't match!
-
-I need to fix `kv:pick` so it iterates through the **store**, not the keys list. Let me rewrite it.
-
-```
-(define (kv:pick store keys)
-  (kv:_fold store (quote ())
-    (lambda (k v acc)
-      (if (kv:_has (list keys) k)  ; check if k is in keys list
-        (kv:_set acc k v)
-        acc))))
-```
-
-Hmm, but we need to check if k is in the keys list. Let me make a helper for that.
-
-Actually a cleaner approach: iterate through the store, and for each entry, check if its key is in the keys list.
-
-```
-(define (kv:_mem key xs)
-  (if (null? xs) #f
-    (if (equal? (car xs) key) #t
-      (kv:_mem key (cdr xs)))))
-
-(define (kv:pick store keys)
-  (kv:_fold store (quote ())
-    (lambda (k v acc)
-      (if (kv:_mem k keys)
-        (kv:_set acc k v)
-        acc))))
-```
-
-This preserves store's insertion order. Let me trace:
-- Start: acc = `()`
-- ("a" . 1): _mem("a", ("c" "a" "ghost")) = #t, acc = `[("a" . 1)]`
-- ("b" . 2): _mem("b", ...) = #f, acc unchanged
-- ("c" . 3): _mem("c", ...) = #t, acc = `[("a" . 1) ("c" . 3)]`
-
-Result: `[(a . 1) (c . 3)]`, pk = `("a" "c")`. 
-
-So the fix is to rewrite `kv:pick` to iterate through the store and filter by whether each key is in the keys list. And add a helper `_mem`.
-
-Actually, I should not need to add `_mem` as exported — but I can add it as an internal helper without exporting.
-
-Let me write the patch.
-
-Actually wait, let me also look at T29 (map-values) to ensure my fix doesn't break anything. T29 is passing, so map-values works. The test for T29 uses `kv:keys` to verify order. Let me check kv:keys:
-
-```
-(define (kv:keys store)
-  (kv:_map store (lambda (k v) k)))
-```
-
-And kv:_map as analyzed preserves order. So `kv:keys` returns keys in insertion order. Good.
-
-For `kv:map-values`, the implementation:
-```
-(define (kv:map-values store proc)
-  (kv:_fold store (quote ())
-    (lambda (k v acc) (kv:_set acc k (proc v)))))
-```
-
-This iterates store in insertion order and inserts each (with kv:_set replacing if exists). Since we only iterate once through the store and no keys repeat, acc builds up in insertion order. 
-
-OK so the fix is just to `kv:pick`. Let me also double-check that no other tests break.
-
-T28-omit:
-```
-(let* ((s (kv:open))
-       (s (kv:set s "a" 1))
-       (s (kv:set s "b" 2))
-       (s (kv:set s "c" 3))
-       (s (kv:set s "d" 4))
-       (o (kv:omit s (list "b" "d")))
-       (ok (kv:keys o)))
-  (t "T28-omit"
-     (and (= (kv:size o) 2)
-          (eq? (kv:get o "b") #f)
-          (eq? (kv:get o "d") #f)
-          (equal? (kv:get o "a") 1)
-          (equal? (kv:get o "c") 3)
-          (equal? (car ok) "a")
-          (equal? (car (cdr ok)) "c"))))
-```
-
-`kv:omit`:
-```
-(define (kv:omit store keys)
-  (let loop ((xs keys) (st store))
-    (if (null? xs)
-      st
-      (loop (cdr xs) (kv:_del st (car xs) (quote ()))))))
-```
-
-This removes keys one by one, preserving the order of survivors. 
-
-OK let me write the patch.
-
-The patch is just to fix `kv:pick` and add an internal helper `_mem`. Actually I should add `_mem` internally and not export it. Let me check current exports... actually it's a private helper, no need to export.
-
-Let me write the patch now.
-
-Looking at the file structure, I'll add `kv:_mem` in the internal primitives section and rewrite `kv:pick`.
-
-Now I also want to think about whether this is enough or if I should add more. The SPEC says "Phase ≥ 3 with all T1–T12 green". Currently we're at 32/33 with one failure. The fix should bring us to 33/33.
-
-After fixing, I might want to advance the phase. The SPEC table only goes to Phase 4 (batch helpers), and we're well past that. The journal comments mention "Phase 5: iteration & query helpers" and "Phase 6: fold / predicate / projection / selection helpers" — both already implemented.
-
-What else could be added? Phase 7? Could add things like:
-- `kv:swap` — swap values for two keys atomically
-- `kv:rename` — rename a key
-- `kv:equal?` — store equality (deep)
-- `kv:to-string` / `kv:from-string` — serialization (but that requires FS escape, so not pure Aura)
-
-Or just fix the bug and call it done. The SPEC says "Phase ≥ 3 with all T1–T12 green, multi-generation history in evolve/journal.jsonl" as success criteria. We're well past that.
-
-Actually since the directive says "If SCORE is already full, advance SPEC phase (new capability) via code that still keeps old tests green", and we don't have full score, we should focus on fixing the regression first.
-
-Let me just fix the bug in `kv:pick` and verify it brings us to 33/33. If I want, I could also add a few more tests to verify the fix and add additional functionality.
-
-Actually let me think about what additional capability could be useful and matches the project theme. Some ideas:
-- `kv:count store proc` — count entries matching predicate (similar to filter but returns just the count)
-- `kv:rename store old-key new-key` — rename a key
-- `kv:set-if-absent store key proc` — set only if key absent; `proc` produces value
-- `kv:to-alist` / `kv:from-alist` — already covered by entries + mset
-- `kv:zip-with` — combine two stores
-
-These are reasonable additions. But let's first fix the bug.
-
-I'll fix `kv:pick` and add a test for it that verifies store-order preservation.
-
-Actually the existing T27 already tests this — we just need to fix the implementation. Let me also add one extra test for `kv:pick` with different scenarios to ensure it's robust.
-
-Let me write the patch now:
-
-```aura
-; ---------------------------------------------------------------------------
-; Phase 6 fold / predicate / projection / selection helpers.
-; Pure functional; preserve insertion order; no FS escapes.
-; ---------------------------------------------------------------------------
-
-; (kv:_mem key xs) -> #t | #f. True iff `key` appears in `xs`.
-; Internal helper; not exported. Used by kv:pick to test membership
-; of a key in the requested-keys list.
-(define (kv:_mem key xs)
-  (if (null? xs)
-    #f
-    (if (equal? (car xs) key)
-      #t
-      (kv:_mem key (cdr xs)))))
-
-; (kv:reduce store init proc) -> result.
-...
-```
-
-And:
-```aura
-; (kv:pick store keys) -> new store containing only the listed keys
-; that are present in `store`. Missing keys are silently dropped
-; (consistent with kv:get/#f-as-miss semantics). Insertion order of the
-; survivors follows `store`, not the order of the input `keys` list.
-; Note: a value that is literally #f cannot be distinguished from a
-; miss — documented limitation consistent with kv:get.
-(define (kv:pick store keys)
-  (kv:_fold store (quote ())
-    (lambda (k v acc)
-      (if (kv:_mem k keys)
-        (kv:_set acc k v)
-        acc))))
-```
-
-That's the fix. Let me apply this patch.
-
-Wait, I should keep the patch minimal. The bug is just `kv:pick`. Let me also bump version to 5 to track the fix. Actually, looking at the version — the kv:version was bumped to 4 in generation 4 when Phase 5 was added. In generation 5, Phase 6 was added but version was still 4? Looking at the file, version is 4, but Phase 5 + Phase 6 are both implemented. That's a comment/header inconsistency. Let me bump version to 5.
-
-Actually let me leave version at 4 for now since the controller may not appreciate the bump for a bug fix. Or maybe bump it... actually it's a minor version bug fix, so leave it.
-
-Actually I'll bump it to 5 to indicate the bug fix release.
-
-Let me also think about whether I should add more tests. The test file already covers a lot. Maybe add a couple of edge case tests for pick.
-
-Let me also think about whether there are other subtle bugs. Let me re-read all the implementations to look for similar issues.
-
-`kv:mset`:
-```
-(define (kv:mset store alist)
-  (let loop ((xs alist) (acc store))
-    (if (null? xs)
-      acc
-      (let ((p (car xs)))
-        (if (pair? p)
-          (loop (cdr xs) (kv:_set acc (car p) (cdr p)))
-          (loop (cdr xs) acc))))))
-```
-
-This is correct — it iterates alist in order, using kv:_set which preserves position for existing keys.
-
-`kv:merge`:
-```
-(define (kv:merge a b)
-  (kv:mset a (kv:_map b (lambda (k v) (cons k v)))))
-```
-
-This converts b to alist (preserving b's insertion order), then mset into a. The kv:_set will preserve positions for existing keys in a, and append b-only keys at the end in b's iteration order. This matches the comment.
-
-`kv:update`:
-```
-(define (kv:update store key default proc)
+Wait, this has the same #f-as-miss problem we noted in pick. But for get-or specifically, that's the documented semantics — if the stored value is #f, you get the default. Document this.
+
+Actually wait, we use `equal?` and the issue with `_ref` returning `#f` for both "missing" and "stored #f". This is a documented limitation. For `kv:get-or`, we can either:
+- Use `kv:has?` to check first
+- Document the limitation
+
+Better: use `has?` first:
+```scheme
+(define (kv:get-or store key default)
   (if (kv:_has store key)
-    (kv:_set store key (proc (kv:_ref store key)))
-    (kv:_set store key (proc default))))
+      (kv:_ref store key)
+      default))
+```
+This works correctly even if the value is `#f`.
+
+**`kv:rename`** — Rename key, preserving value and position. Tricky to do preserving position with alist. We can use the existing `_set` pattern but need to remove old key in place. Looking at the existing patterns:
+- `_set` replaces in place if key exists
+- `_del` removes but rebuilds order
+
+For rename preserving position: replace in place with new key.
+```scheme
+(define (kv:rename store old-key new-key)
+  (if (and (kv:_has store old-key)
+           (not (kv:_has store new-key)))  ; or handle overwrite
+      ...
 ```
 
-Looks fine.
-
-`kv:filter`:
-```
-(define (kv:filter store proc)
+Actually, simpler: use `_fold` to build new store, replacing old key with new key.
+```scheme
+(define (kv:rename store old-key new-key)
   (kv:_fold store (quote ())
+    (lambda (k v acc)
+      (if (equal? k old-key)
+          (kv:_set acc new-key v)
+          (kv:_set acc k v)))))
+```
+But this loses position. To preserve position: replace in place.
+
+Hmm, let me think. With the alist representation:
+- If old-key exists and new-key doesn't: we want a single replacement in place.
+- If old-key doesn't exist: no-op.
+- If both exist: combine semantics — rename old to new, but new-key already has its own value? That's ambiguous. Document that rename fails if new-key already exists.
+
+Let me write it cleanly:
+```scheme
+(define (kv:rename store old-key new-key)
+  (if (not (kv:_has store old-key))
+      store  ; no-op, old key doesn't exist
+      (if (kv:_has store new-key)
+          store  ; no-op, new key already exists (ambiguous)
+          (kv:_fold store (quote ())
+            (lambda (k v acc)
+              (if (equal? k old-key)
+                  (kv:_set acc new-key v)
+                  (kv:_set acc k v)))))))
+```
+
+This preserves order among all keys except: when we hit `old-key`, we substitute `new-key`. The position of `old-key` is preserved as the position of `new-key`. All other keys keep their relative order.
+
+Actually wait — when we encounter `old-key` and add `new-key`, this will REPLACE `new-key` if it's already in `acc`. But `acc` only contains keys we've already seen, and we're processing in order, so when we hit old-key, we haven't seen new-key yet (or have we?). Since `new-key` doesn't exist in store (we checked), `_set acc new-key v` just appends. Good.
+
+But wait — what about other later keys? They're added with their own keys, so they don't conflict with `new-key`. Good.
+
+So position of old-key is preserved (as new-key's position), and all other keys keep their positions. 
+
+**`kv:diff`** — Return (added removed changed) between a and b.
+- `added`: keys in b but not in a, with b's value
+- `removed`: keys in a but not in b, with a's value
+- `changed`: keys in both, with values that differ
+
+```scheme
+(define (kv:diff a b)
+  (let ((added (quote ()))
+        (removed (quote ()))
+        (changed (quote ())))
+    ; iterate a: for each (k . va), check b
+    (let ((a-folded (kv:_fold a (cons added (cons removed changed))
+                    (lambda (k v acc)
+                      (let ((vb (kv:_ref b k)))
+                        (cond
+                          ((eq? vb #f)
+                           (cons (cons (cons k v) (car acc))
+                                 (cdr acc)))  ; removed grows
+                          ((equal? vb v)
+                           acc)  ; unchanged
+                          (else
+                           (cons (car acc)
+                                 (cons (cdr acc) ... )))  ; hmm getting complex
+                          ))))))
+    ...
+    ))
+```
+
+This is getting messy. Let me use a simpler approach with side-effects-free accumulator pattern. Actually we can compute them separately.
+
+Simpler approach: compute three lists independently.
+
+```scheme
+(define (kv:diff a b)
+  (let* ((ka (kv:keys a))
+         (kb (kv:keys b))
+         (added-alist
+           (kv:_fold b (quote ())
+             (lambda (k v acc)
+               (if (kv:_has a k)
+                   acc
+                   (kv:_set acc k v)))))
+         (removed-alist
+           (kv:_fold a (quote ())
+             (lambda (k v acc)
+               (if (kv:_has b k)
+                   acc
+                   (kv:_set acc k v)))))
+         (changed-alist
+           (kv:_fold a (quote ())
+             (lambda (k v acc)
+               (let ((vb (kv:_ref b k)))
+                 (if (and (not (eq? vb #f))  ; but eq? #f ambiguous
+                          (not (equal? vb v)))
+                     (kv:_set acc k (cons v vb))  ; (old . new)
+                     acc))))))
+    (list added-alist removed-alist changed-alist)))
+```
+
+The `changed-alist` stores `(k . (old-val . new-val))` entries. The `(eq? vb #f)` check has the ambiguity problem. To be safe, use `kv:_has`:
+```scheme
+(define (kv:diff a b)
+  ...
+  (changed-alist
+    (kv:_fold a (quote ())
+      (lambda (k va acc)
+        (if (kv:_has b k)
+            (let ((vb (kv:_ref b k)))
+              (if (equal? va vb)
+                  acc
+                  (kv:_set acc k (cons va vb))))
+            acc))))))
+```
+
+Wait — this includes keys where `va` and `vb` are both present. For the changed-alist, we want to include only those where the values actually differ. The `_has b k` check correctly identifies keys present in b, and then we compare. If they're equal, skip; if not, include as `(k . (old . new))`.
+
+But the ordering: this walks `a`, so changed-alist is in `a`'s order. That's natural.
+
+**`kv:partition`** — Split into (matching . non-matching):
+```scheme
+(define (kv:partition store proc)
+  (kv:_fold store (list (quote ()) (quote ()))
     (lambda (k v acc)
       (if (proc k v)
-        (kv:_set acc k v)
-        acc))))
+          (list (kv:_set (car acc) k v) (car (cdr acc)))
+          (list (car acc) (kv:_set (car (cdr acc)) k v))))))
 ```
 
-Iterates store in insertion order, builds acc with kv:_set. Correct.
+Returns `(matching-store . non-matching-store)`.
 
-`kv:find`:
-```
-(define (kv:find store proc)
-  (if (null? store)
-    #f
-    (let ((p (car store)))
-      (if (and (pair? p) (proc (car p) (cdr p)))
-        p
-        (kv:find (cdr store) proc)))))
-```
-
-Iterates store in insertion order, returns first match. Correct.
-
-`kv:values`:
-```
-(define (kv:values store)
-  (kv:_map store (lambda (k v) v)))
-```
-
-Returns values in insertion order. Correct.
-
-`kv:entries`:
-```
-(define (kv:entries store)
-  (kv:_map store (lambda (k v) (cons k v))))
+**`kv:equal?`** — Deep structural equality:
+```scheme
+(define (kv:equal? a b)
+  (let ((ka (kv:keys a))
+        (kb (kv:keys b)))
+    (if (= (length ka) (length kb))
+        (let loop ((xs ka))
+          (if (null? xs)
+              #t
+              (let ((k (car xs)))
+                (let ((va (kv:_ref a k))
+                      (vb (kv:_ref b k)))
+                  (if (and (equal? va vb)
+                           (kv:_has b k))
+                      (loop (cdr xs))
+                      #f)))))
+        #f)))
 ```
 
-Returns alist in insertion order. Correct.
-
-OK so the only bug is `kv:pick`. Let me fix it.
-
-Let me write the final patch:
-
-The patch will:
-1. Add `kv:_mem` internal helper
-2. Rewrite `kv:pick` to iterate through store and filter by membership
-
-I'll keep everything else unchanged.
-
-Wait, I also want to verify the test file doesn't change. The existing T27 test already expects store-order, so my fix should make it pass without changing the test.
-
-Actually let me also add a test or two for `kv:pick` to cover additional cases like empty key list and all-missing:
-
-```aura
-; T27b: pick() with empty key list is empty.
-(t "T27b-pick-empty-keys"
-   (= (kv:size (kv:pick (kv:set (kv:set (kv:open) "a" 1) "b" 2) (quote ()))) 0))
-
-; T27c: pick() with all-missing key list is empty.
-(t "T27c-pick-all-missing"
-   (= (kv:size (kv:pick (kv:set (kv:set (kv:open) "a" 1) "b" 2) (list "x" "y"))) 0))
+Wait, this has the #f-as-value issue. If `va` is `#f`, the test passes even when key is missing in b. Use `kv:_has`:
+```scheme
+(define (kv:equal? a b)
+  (let ((ka (kv:keys a)))
+    (if (= (length ka) (kv:size b))
+        (let loop ((xs ka))
+          (if (null? xs)
+              #t
+              (let ((k (car xs)))
+                (if (kv:_has b k)
+                    (if (equal? (kv:_ref a k) (kv:_ref b k))
+                        (loop (cdr xs))
+                        #f)
+                    #f))))
+        #f)))
 ```
 
-These are nice additions. Let me include them.
+OK now let me think about what tests to add. Let me add tests T30-T34 for these 5 new functions:
 
-Now let me write the patch.
+T30: get-or returns value if present, default if missing
+T31: rename preserves position, no-op if old key missing or new key exists
+T32: diff returns added/removed/changed
+T33: partition splits store by predicate
+T34: equal? compares two stores deeply
 
-Actually, I realize the patch should be the full file since the task says "Prefer full-file replacement for small projects (lib/kv.aura)". Let me write the full lib/kv.aura with just the bug fix and version bump.
+Let me make sure all existing tests still pass and the new ones pass.
 
-And for tests/smoke.aura, I'll add the two extra tests.
+Wait, let me think more carefully about the lib changes. I want to keep things clean and the comment block in the file should reflect the new phase.
 
-Let me proceed.</think>
+Let me draft the new lib/kv.aura:
 
-### REVIEW
-- **Strengths**: Phases 0–6 of the in-file roadmap are implemented; alist-of-cons representation is robust (defensive against stray non-pair cells) and all iterators preserve insertion order. Pure Aura, no FS escapes, export-before-define discipline intact, version bumped to 4.
-- **Failure**: **T27-pick FAIL** — `kv:pick` iterates over the *requested-keys list* and `kv:_set`s each survivor into `acc`, so the resulting order is the keys-list order, not the store's insertion order. The test (and the doc comment I wrote myself) explicitly require store-order: `pk = ("a" "c")` not `("c" "a")`. This is a **semantic bug**, not a host risk.
-- **Other**: All 32 other tests pass — no regressions in `omit`/`map-values`/`filter`/`merge`. The `kv:version` comment block still says "Phase 6" but `kv:version` is `4`; will nudge to `5` for traceability.
-
-### DIRECTION
-- **Target phase**: fix the `kv:pick` ordering bug to land 33/33. This is a same-phase bugfix (still Phase 6), no SPEC phase advancement. Don't touch any other op — they're individually covered by tests.
-- **Ops to touch**:
-  - Add internal `kv:_mem` helper (membership test, not exported).
-  - Rewrite `kv:pick` to walk **the store** (via `kv:_fold`) and keep only entries whose key is in the requested-keys list — this guarantees store-insertion-order among survivors, matching the doc comment and T27's expectation.
-  - Bump `kv:version` `4 → 5`.
-  - Add two tiny edge tests T27b/T27c in `tests/smoke.aura` (empty key list; all-missing key list) so this regression class is locked down.
-- **Do NOT touch**: `kv:_set`, `kv:_fold`, `kv:_map`, `kv:_del`, `kv:mset`, `kv:merge`, `kv:update`, `kv:filter`, `kv:find`, `kv:values`, `kv:entries`, `kv:reduce`, `kv:any?`, `kv:every?`, `kv:omit`, `kv:map-values`, `kv:keys`, `kv:for-each`. All verified green.
-
-### PATCH
-FILE projects/kv/lib/kv.aura
+Top comment:
 ```
 ; projects/kv/lib/kv.aura — mini KV store (project-level evolve subject)
 ; Phase 0..2: open + set/get + del/has?/size/keys/clear/overwrite.
@@ -469,6 +293,308 @@ FILE projects/kv/lib/kv.aura
 ;             empty?, for-each).
 ; Phase 6:   fold / predicate / projection / selection helpers
 ;             (reduce, any?, every?, pick, omit, map-values).
+; Phase 7:   convenience / comparison helpers
+;             (get-or, rename, diff, partition, equal?).
+```
+
+Then bump version to 6.
+
+Add exports for the new functions.
+
+Now let me think about whether the existing code is clean. Looking at the existing code, all seems good. The `kv:_mem` helper is already added for `kv:pick`.
+
+Let me also think — are there other things I could add that are useful? Maybe:
+- `kv:get-or` (already planned)
+- `kv:rename`
+- `kv:diff`
+- `kv:partition`
+- `kv:equal?`
+
+That's 5 new ops. Phase 7.
+
+Actually let me consider whether to add these in a way that's truly "new capability". The controller directive says "advance SPEC phase (new capability)". This is exactly that.
+
+Let me write the full new lib/kv.aura file.
+
+Actually wait, before I write, let me double-check the order of operations. The export block needs to include all exports. Let me list all exports:
+- kv:version
+- kv:open, set, get, del, has?, keys, size, clear
+- kv:mset, mget, update, merge, copy
+- kv:values, entries, filter, find, empty?, for-each
+- kv:reduce, any?, every?, pick, omit, map-values
+- NEW: kv:get-or, rename, diff, partition, equal?
+
+OK now let me write the full file.
+
+Actually, looking at the SPEC again — Phase 4 says "optional: batch helpers (T13+)". The current implementation already has T18+ (Phase 5), T24+ (Phase 6). So we've already gone beyond the SPEC. Adding Phase 7 is a natural extension.
+
+Let me now consider: are there tests T13-T29 in the smoke file that don't conflict? Let me count:
+- T1-T12: Phase 0-2 (basic)
+- T13-T17: Phase 3 (multi-key stress)
+- T18, T19, T19b, T20, T21, T21b, T22, T23: Phase 5 (iteration)
+- T24-T29, T26b, T26c, T27b, T27c: Phase 6 (fold/predicate/projection)
+
+So tests go up to T29 with some sub-tests. I'll add T30-T34 for Phase 7.
+
+Let me carefully write the new tests:
+
+T30: kv:get-or
+```scheme
+(let* ((s (kv:set (kv:set (kv:open) "a" 1) "b" 2)))
+  (t "T30-get-or"
+     (and (= (kv:get-or s "a" 99) 1)
+          (= (kv:get-or s "missing" 42) 42)
+          (= (kv:get-or (kv:open) "anything" 7) 7))))
+```
+
+T31: kv:rename
+```scheme
+(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
+       (r (kv:rename s "b" "bb"))
+       (rk (kv:keys r)))
+  (t "T31-rename"
+     (and (= (kv:size r) 3)
+          (eq? (kv:has? r "b") #f)
+          (equal? (kv:get r "bb") 2)
+          (equal? (kv:get r "a") 1)
+          (equal? (kv:get r "c") 3)
+          (equal? (car rk) "a")
+          (equal? (car (cdr rk)) "bb")  ; b's position preserved
+          (equal? (car (cdr (cdr rk))) "c"))))
+```
+
+Also test no-op semantics:
+```scheme
+(t "T31b-rename-noop-missing"
+   (let* ((s (kv:set (kv:open) "a" 1))
+          (r (kv:rename s "ghost" "new")))
+     (and (= (kv:size r) 1) (equal? (kv:get r "a") 1))))
+(t "T31c-rename-noop-exists"
+   (let* ((s (kv:set (kv:set (kv:open) "a" 1) "b" 2))
+          (r (kv:rename s "a" "b")))
+     (and (= (kv:size r) 2) (equal? (kv:get r "a") 1) (equal? (kv:get r "b") 2))))
+```
+
+T32: kv:diff
+```scheme
+(let* ((a (kv:set (kv:set (kv:set (kv:open) "x" 1) "y" 2) "z" 3))
+       (b (kv:set (kv:set (kv:set (kv:open) "y" 20) "z" 3) "w" 4))
+       (d (kv:diff a b))
+       (added (car d))
+       (removed (car (cdr d)))
+       (changed (car (cdr (cdr d)))))
+  (t "T32-diff"
+     (and (= (kv:size added) 1)
+          (equal? (kv:get added "w") 4)
+          (= (kv:size removed) 1)
+          (equal? (kv:get removed "x") 1)
+          (= (kv:size changed) 1)
+          (equal? (kv:get changed "y") (cons 2 20)))))
+```
+
+Hmm wait, kv:get returns the value, and for changed-alist the value is `(cons 2 20)` which is `(2 . 20)`. The test expects `(equal? (kv:get changed "y") (cons 2 20))`. Should work.
+
+But this is getting fragile. Let me make sure: `kv:_ref` returns `(cdr p)` where `p = (cons k (cons 2 20))`. So `(cdr p)` = `(cons 2 20)` = `(2 . 20)`. Yes, that's `(2 . 20)`. And `(cons 2 20)` is the same. ✓
+
+T33: kv:partition
+```scheme
+(let* ((s (kv:set (kv:set (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3) "d" 4) "e" 5))
+       (p (kv:partition s (lambda (k v) (even? v))))
+       (match (car p))
+       (nomatch (car (cdr p))))
+  (t "T33-partition"
+     (and (= (kv:size match) 2)
+          (equal? (kv:get match "b") 2)
+          (equal? (kv:get match "d") 4)
+          (= (kv:size nomatch) 3)
+          (equal? (kv:get nomatch "a") 1)
+          (equal? (kv:get nomatch "c") 3)
+          (equal? (kv:get nomatch "e") 5))))
+```
+
+T34: kv:equal?
+```scheme
+(let* ((a (kv:set (kv:set (kv:open) "a" 1) "b" 2))
+       (b (kv:set (kv:set (kv:open) "b" 2) "a" 1))  ; different insertion order
+       (c (kv:set (kv:set (kv:open) "a" 1) "b" 2)))
+  (t "T34-equal"
+     (and (kv:equal? a b)  ; insertion order doesn't matter for equality
+          (kv:equal? a c)
+          (not (kv:equal? a (kv:set a "c" 3)))
+          (not (kv:equal? a (kv:set (kv:set (kv:open) "a" 1) "b" 3))))))
+```
+
+And `kv:equal?` on different sizes:
+```scheme
+(t "T34b-equal-empty"
+   (and (kv:equal? (kv:open) (kv:open))
+        (not (kv:equal? (kv:open) (kv:set (kv:open) "a" 1)))))
+```
+
+OK let me write the full files now.
+
+Actually wait — let me reconsider the `kv:diff` design. The current diff returns `(added-alist removed-alist changed-alist)`. But the smoke test I wrote treats changed-alist as a "store" — `kv:get changed "y"` should return `(cons 2 20)`. That's because I'm storing `(k . (old . new))` entries, and `kv:get` returns the cdr. OK that works.
+
+But there's a subtlety: I documented `kv:diff` returns `(added removed changed)`. And changed is a "store" of `(k . (old . new))` pairs. That's a reasonable representation.
+
+Let me finalize.
+
+Actually, let me reconsider `kv:rename`. The spec doesn't mention it, but it's a common KV operation. Let me keep it.
+
+Also for `kv:equal?` — this is structural equality ignoring insertion order. Good.
+
+Let me write the patch now. The file is fairly long, so I'll do a full file replacement.
+
+Here's my plan:
+- Update header comment to include Phase 7
+- Bump version to 6
+- Add new exports: kv:get-or, kv:rename, kv:diff, kv:partition, kv:equal?
+- Add new function definitions
+
+For tests, I'll add T30-T34b to smoke.aura.
+
+Let me now write the full files.
+
+Actually, looking more carefully, I realize there's one issue with `kv:get-or`. If the store contains a key whose value is `#f`, `kv:get-or` returns `#f`, not the default. With our `kv:_has` check, we correctly distinguish "stored #f" from "missing". Let me make sure the implementation is right:
+
+```scheme
+(define (kv:get-or store key default)
+  (if (kv:_has store key)
+      (kv:_ref store key)
+      default))
+```
+
+This correctly returns the stored value (even if `#f`) if the key exists, otherwise returns the default. ✓
+
+For `kv:rename`, I want to be careful about the case where `old-key = new-key`. Let's check:
+- `kv:_has store k` is `#t` (old exists)
+- `kv:_has store new-key` is `#t` (same as old-key)
+- So we return `store` unchanged. 
+
+For `kv:diff`, edge case: both empty. Returns `((() () ()))`. The smoke test doesn't check this but let's be aware.
+
+Actually let me reconsider `kv:diff`:
+```scheme
+(define (kv:diff a b)
+  (let* ((added (kv:_fold b (quote ())
+                    (lambda (k v acc)
+                      (if (kv:_has a k)
+                          acc
+                          (kv:_set acc k v)))))
+         (removed (kv:_fold a (quote ())
+                       (lambda (k v acc)
+                         (if (kv:_has b k)
+                             acc
+                             (kv:_set acc k v)))))
+         (changed (kv:_fold a (quote ())
+                       (lambda (k va acc)
+                         (if (kv:_has b k)
+                             (let ((vb (kv:_ref b k)))
+                               (if (equal? va vb)
+                                   acc
+                                   (kv:_set acc k (cons va vb))))
+                             acc)))))
+    (list added removed changed)))
+```
+
+OK let me now write the full files.
+
+Wait, I want to double-check `kv:partition`. The accumulator is `(match . nomatch)`. When processing each entry, we update one of the two lists. After processing, return `(match . nomatch)`.
+
+```scheme
+(define (kv:partition store proc)
+  (kv:_fold store (list (quote ()) (quote ()))
+    (lambda (k v acc)
+      (let ((match (car acc))
+            (nomatch (car (cdr acc))))
+        (if (proc k v)
+            (list (kv:_set match k v) nomatch)
+            (list match (kv:_set nomatch k v)))))))
+```
+
+Returns a pair `(match . nomatch)`. ✓
+
+For `kv:equal?`:
+```scheme
+(define (kv:equal? a b)
+  (if (= (kv:size a) (kv:size b))
+      (let loop ((xs (kv:keys a)))
+        (if (null? xs)
+            #t
+            (let ((k (car xs)))
+              (if (kv:_has b k)
+                  (if (equal? (kv:_ref a k) (kv:_ref b k))
+                      (loop (cdr xs))
+                      #f)
+                  #f))))
+      #f))
+```
+
+This compares sizes first, then checks each key of `a` is in `b` with equal value. This implies the same multiset of keys. ✓
+
+OK now let me write everything.
+
+Actually one more concern: when extending tests/smoke.aura, I need to make sure the existing tests still pass. They should, since I'm only adding new test cases at the end (T30 onwards) and not modifying existing ones.
+
+Let me also think about whether to bump version. Yes, bump to 6.
+
+OK final plan for the patch:
+
+1. lib/kv.aura: Add Phase 7 header comment, bump version to 6, add 5 new exports, add 5 new function definitions.
+
+2. tests/smoke.aura: Add T30, T31, T31b, T31c, T32, T33, T34, T34b tests.
+
+Total new tests: 8. Total tests will be: 35 + 8 = 43. New score target: 43/43.
+
+Wait, looking again, the test count is 35. Let me recount from the smoke file:
+- T1-T12: 12 tests
+- T13-T17: 5 tests (T13, T14, T15, T16, T17)
+- T18: 1
+- T19, T19b: 2
+- T20: 1
+- T21, T21b: 2
+- T22: 1
+- T23: 1
+- T24: 1
+- T25: 1
+- T26, T26b, T26c: 3
+- T27, T27b, T27c: 3
+- T28: 1
+- T29: 1
+
+Total: 12 + 5 + 1 + 2 + 1 + 2 + 1 + 1 + 1 + 1 + 3 + 3 + 1 + 1 = 35 ✓
+
+Adding 8 tests brings total to 43. New score: 43/43.
+
+Let me finalize the patch now.
+
+Actually, let me reconsider whether to add all 5 new ops. That's a lot at once. But they're all pure functional and small. And the journal shows we go through phases systematically, so adding a Phase 7 with multiple coherent ops is natural.
+
+Actually, let me be a bit more conservative and add 4 instead of 5. Let me skip `kv:equal?` and use something else... or keep it. Hmm.
+
+Actually 5 is fine. They form a coherent "convenience / comparison" phase. Let me keep all 5.
+
+Final answer ready. Let me write the patch.
+
+Wait, I need to consider: should I include the `(version)` in the comment header at the top of the file? Let me check existing pattern:
+- Top comment mentions "Phase 0..2", "Phase 3", "Phase 4", "Phase 5", "Phase 6"
+- Below: `(define kv:version 5)` then `(export ...)` 
+
+I'll bump version to 6 and add Phase 7 description.
+
+Let me write the full file:
+
+```scheme
+; projects/kv/lib/kv.aura — mini KV store (project-level evolve subject)
+; Phase 0..2: open + set/get + del/has?/size/keys/clear/overwrite.
+; Phase 3:   multi-key stress + isolation.
+; Phase 4:   batch / composite helpers (mset, mget, update, merge, copy).
+; Phase 5:   iteration & query helpers (values, entries, filter, find,
+;             empty?, for-each).
+; Phase 6:   fold / predicate / projection / selection helpers
+;             (reduce, any?, every?, pick, omit, map-values).
+; Phase 7:   convenience / comparison helpers
+;             (get-or, rename, diff, partition, equal?).
 ;
 ; Store representation: alist of (key . val) pairs.
 ;   * Keys are strings.
@@ -504,9 +630,355 @@ FILE projects/kv/lib/kv.aura
         kv:every?
         kv:pick
         kv:omit
-        kv:map-values)
+        kv:map-values
+        kv:get-or
+        kv:rename
+        kv:diff
+        kv:partition
+        kv:equal?)
 
-(define kv:version 5)
+(define kv:version 6)
+
+; ... [existing internals] ...
+
+; Phase 7 section at the bottom.
+```
+
+OK let me finalize. I'll write the full file.
+
+Actually I realize the existing file already has version 5. The journal shows it was at version 5 in the last test output. I need to bump to 6.
+
+Let me carefully construct the full new lib/kv.aura file.
+
+One more consideration: let me think about `kv:diff` more carefully. The smoke test:
+
+```scheme
+(let* ((a (kv:set (kv:set (kv:set (kv:open) "x" 1) "y" 2) "z" 3))
+       (b (kv:set (kv:set (kv:set (kv:open) "y" 20) "z" 3) "w" 4))
+       (d (kv:diff a b))
+       (added (car d))
+       (removed (car (cdr d)))
+       (changed (car (cdr (cdr d)))))
+  (t "T32-diff"
+     (and (= (kv:size added) 1)
+          (equal? (kv:get added "w") 4)
+          (= (kv:size removed) 1)
+          (equal? (kv:get removed "x") 1)
+          (= (kv:size changed) 1)
+          (equal? (kv:get changed "y") (cons 2 20)))))
+```
+
+Walking through:
+- a = {x:1, y:2, z:3} in that order
+- b = {y:20, z:3, w:4} in that order
+- added (in b not in a): w → {w:4}
+- removed (in a not in b): x → {x:1}
+- changed (in both, different value): y → {y: (2 . 20)}
+- z is unchanged
+
+Walk through `kv:diff`:
+- added: walk b. b has y (in a, skip), z (in a, skip), w (not in a, add). Result: {w:4}. ✓
+- removed: walk a. a has x (not in b, add), y (in b, skip), z (in b, skip). Result: {x:1}. ✓
+- changed: walk a. a has x (not in b, skip), y (in b, vb=20, va=2, different, add (y . (2 . 20))), z (in b, vb=3, va=3, equal, skip). Result: {y: (2 . 20)}. ✓
+
+
+
+Now let me also think about `kv:partition` smoke test:
+```scheme
+(let* ((s (kv:set (kv:set (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3) "d" 4) "e" 5))
+       (p (kv:partition s (lambda (k v) (even? v))))
+       (match (car p))
+       (nomatch (car (cdr p))))
+  (t "T33-partition"
+     (and (= (kv:size match) 2)
+          (equal? (kv:get match "b") 2)
+          (equal? (kv:get match "d") 4)
+          (= (kv:size nomatch) 3)
+          (equal? (kv:get nomatch "a") 1)
+          (equal? (kv:get nomatch "c") 3)
+          (equal? (kv:get nomatch "e") 5))))
+```
+
+Walking through partition:
+- s = {a:1, b:2, c:3, d:4, e:5}
+- predicate: even? value
+- Walking in order:
+  - a:1 → nomatch (no, wait, the predicate is even? — a is 1, odd → nomatch)
+  - b:2 → match
+  - c:3 → nomatch
+  - d:4 → match
+  - e:5 → nomatch
+
+Wait actually the predicate is `(lambda (k v) (even? v))`. Let me re-check.
+
+`(even? 1)` → #f
+`(even? 2)` → #t
+`(even? 3)` → #f
+`(even? 4)` → #t
+`(even? 5)` → #f
+
+So:
+- a:1 → nomatch (even? 1 is #f)
+- b:2 → match
+- c:3 → nomatch
+- d:4 → match
+- e:5 → nomatch
+
+match = {b:2, d:4}, nomatch = {a:1, c:3, e:5}. ✓
+
+Test expectations:
+- size match = 2 ✓
+- get match "b" = 2 ✓
+- get match "d" = 4 ✓
+- size nomatch = 3 ✓
+- get nomatch "a" = 1 ✓
+- get nomatch "c" = 3 ✓
+- get nomatch "e" = 5 ✓
+
+
+
+Now `kv:rename` smoke test:
+```scheme
+(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
+       (r (kv:rename s "b" "bb"))
+       (rk (kv:keys r)))
+  (t "T31-rename"
+     (and (= (kv:size r) 3)
+          (eq? (kv:has? r "b") #f)
+          (equal? (kv:get r "bb") 2)
+          (equal? (kv:get r "a") 1)
+          (equal? (kv:get r "c") 3)
+          (equal? (car rk) "a")
+          (equal? (car (cdr rk)) "bb")
+          (equal? (car (cdr (cdr rk))) "c"))))
+```
+
+Walking rename:
+- s = {a:1, b:2, c:3}
+- rename "b" → "bb"
+- _fold walks s, processing:
+  - a:1 → add a:1 to acc. acc = {a:1}
+  - b:2 → add bb:2 to acc. acc = {a:1, bb:2}
+  - c:3 → add c:3 to acc. acc = {a:1, bb:2, c:3}
+
+Wait — when adding bb:2, we call `kv:_set acc "bb" 2`. acc is `{a:1}`. "bb" not in acc. Append. acc = {a:1, bb:2}. ✓
+Then c:3 → acc = {a:1, bb:2, c:3}. ✓
+
+So:
+- size r = 3 ✓
+- has? "b" = #f ✓
+- get "bb" = 2 ✓
+- get "a" = 1 ✓
+- get "c" = 3 ✓
+- keys = (a bb c) ✓
+
+
+
+And the no-op tests:
+```scheme
+(t "T31b-rename-noop-missing"
+   (let* ((s (kv:set (kv:open) "a" 1))
+          (r (kv:rename s "ghost" "new")))
+     (and (= (kv:size r) 1) (equal? (kv:get r "a") 1))))
+(t "T31c-rename-noop-exists"
+   (let* ((s (kv:set (kv:set (kv:open) "a" 1) "b" 2))
+          (r (kv:rename s "a" "b")))
+     (and (= (kv:size r) 2) (equal? (kv:get r "a") 1) (equal? (kv:get r "b") 2))))
+```
+
+Walking rename "ghost" → "new":
+- _has "ghost" in {a:1} → #f
+- Return store unchanged. ✓
+
+Walking rename "a" → "b" in {a:1, b:2}:
+- _has "a" → #t
+- _has "b" → #t (already exists)
+- Return store unchanged. ✓
+
+Good.
+
+For `kv:get-or`:
+```scheme
+(let* ((s (kv:set (kv:set (kv:open) "a" 1) "b" 2)))
+  (t "T30-get-or"
+     (and (= (kv:get-or s "a" 99) 1)
+          (= (kv:get-or s "missing" 42) 42)
+          (= (kv:get-or (kv:open) "anything" 7) 7))))
+```
+
+- get-or {a:1, b:2} "a" 99 → _has "a" → #t, _ref "a" → 1. Return 1. ✓
+- get-or {a:1, b:2} "missing" 42 → _has "missing" → #f. Return 42. ✓
+- get-or {} "anything" 7 → _has "anything" → #f. Return 7. ✓
+
+
+
+For `kv:equal?`:
+```scheme
+(let* ((a (kv:set (kv:set (kv:open) "a" 1) "b" 2))
+       (b (kv:set (kv:set (kv:open) "b" 2) "a" 1))
+       (c (kv:set (kv:set (kv:open) "a" 1) "b" 2)))
+  (t "T34-equal"
+     (and (kv:equal? a b)
+          (kv:equal? a c)
+          (not (kv:equal? a (kv:set a "c" 3)))
+          (not (kv:equal? a (kv:set (kv:set (kv:open) "a" 1) "b" 3))))))
+
+(t "T34b-equal-empty"
+   (and (kv:equal? (kv:open) (kv:open))
+        (not (kv:equal? (kv:open) (kv:set (kv:open) "a" 1)))))
+```
+
+Walking equal?:
+- equal? {a:1, b:2} {b:2, a:1} → size 2 == 2. Walk a's keys: ("a" "b").
+  - "a": has? b → yes → _ref a "a" = 1, _ref b "a" = 1 → equal. Continue.
+  - "b": has? b → yes → _ref a "b" = 2, _ref b "b" = 2 → equal. Continue.
+  - Null. Return #t. ✓
+- equal? a c → both {a:1, b:2}. #t. ✓
+- equal? a {a:1, b:2, c:3} → size 3 vs 2 → #f. ✓ (covers size mismatch)
+- equal? a {a:1, b:3} → size 2 vs 2. Walk a's keys.
+  - "a": has? b → yes → _ref = 1, _ref = 1. equal. Continue.
+  - "b": has? b → yes → _ref = 2, _ref = 3. Not equal. Return #f. ✓
+
+Walking equal? empty tests:
+- equal? {} {} → size 0 == 0. Null xs. Return #t. ✓
+- equal? {} {a:1} → size 0 vs 1 → #f. ✓
+
+
+
+Now I have full confidence in the implementation and tests. Let me write the final patch.
+
+Actually, one more thought: I'm using `even?` as a built-in predicate. Is `even?` available in Aura? Looking at the existing tests, they use `>`, `=`, `<`, `+`, `*`, `equal?`, `eq?`, `pair?`, `null?`, `not`, `length`, `string?`, `set!`, `display`, `newline`, `car`, `cdr`, `cons`, `list`, `quote`, `begin`, `let`, `let*`, `if`, `lambda`. But not `even?` explicitly.
+
+Hmm. To be safe, I'll use a lambda instead: `(lambda (k v) (= (mod v 2) 0))` or `(lambda (k v) (> v 2))`.
+
+Actually, looking at T19 in the existing tests: `(lambda (k v) (> v 2))`. That's safe. Let me use the same style.
+
+Actually `mod` may or may not be available. Let me use a safe predicate. Let me write it as:
+```scheme
+(kv:partition s (lambda (k v) (= 0 (- v (mod-or-something v 2)))))
+```
+
+Hmm, complicated. Let me just use a different value-based predicate. Maybe:
+```scheme
+(kv:partition s (lambda (k v) (> v 2)))
+```
+
+With s = {a:1, b:2, c:3, d:4, e:5}:
+- a:1 → 1 > 2 → #f → nomatch
+- b:2 → 2 > 2 → #f → nomatch
+- c:3 → 3 > 2 → #t → match
+- d:4 → 4 > 2 → #t → match
+- e:5 → 5 > 2 → #t → match
+
+So match = {c:3, d:4, e:5} (3 entries), nomatch = {a:1, b:2} (2 entries).
+
+Let me update the test accordingly:
+```scheme
+(let* ((s (kv:set (kv:set (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3) "d" 4) "e" 5))
+       (p (kv:partition s (lambda (k v) (> v 2))))
+       (match (car p))
+       (nomatch (car (cdr p))))
+  (t "T33-partition"
+     (and (= (kv:size match) 3)
+          (equal? (kv:get match "c") 3)
+          (equal? (kv:get match "d") 4)
+          (equal? (kv:get match "e") 5)
+          (= (kv:size nomatch) 2)
+          (equal? (kv:get nomatch "a") 1)
+          (equal? (kv:get nomatch "b") 2))))
+```
+
+OK that works. Let me finalize.
+
+Now let me write the full files. I'll be careful to preserve all the existing internals.
+
+OK writing the patch now.
+
+Actually, looking at the file once more — the file is quite long. Let me write it carefully.</think>
+
+### REVIEW
+
+- **Strengths**
+  - All 35/35 tests green across Phases 0–6 of the in-file roadmap. Alist-of-cons representation is robust (defensive skipping of non-pair cells), insertion order is preserved everywhere, and every op is pure / functional.
+  - Export-before-define discipline maintained; API names stable; no FS / no network / no host escape used.
+  - Last patch fixed the `kv:pick` ordering bug correctly (now walks the *store*, not the requested-keys list). Doc comment matches behavior.
+  - Internal `kv:_mem` helper is in place and used cleanly by `kv:pick`.
+- **Failures / Risks**
+  - None active; SCORE is full. Plateau risk: further naive patches can only regress.
+  - `#f`-as-stored-value vs `#f`-as-miss is a documented limitation that `kv:get-or` must respect (use `kv:_has`, not `kv:_ref`'s return value).
+  - Real "host escape" / FS path is still completely absent; the codebase is denseness-clean.
+- **Denseness / Host risks**
+  - Zero host dependencies; everything derived from a small set of internal primitives (`_ref`, `_has`, `_set`, `_del`, `_fold`, `_map`, `_mem`). Excellent substrate for further extension.
+
+### DIRECTION
+
+- **Target phase: Phase 7 — convenience / comparison helpers.** Same denseness posture (pure Aura, derived from existing internals), keeps all T1–T29 green, advances SPEC beyond its current implicit ceiling (Phase 4). No FS escapes, no API renames, no internals touched.
+- **Ops to add** (5 new, all pure, all derive from existing primitives; export-before-define preserved):
+  - `kv:get-or`  — `(store key default)`; uses `kv:_has` so a stored `#f` is distinguishable from a miss.
+  - `kv:rename`  — `(store old-key new-key)`; replaces the old key in place to preserve insertion position; no-op when `old-key` is absent or `new-key` is already present.
+  - `kv:diff`    — `(a b)` → `(added removed changed)` as three sub-stores; `changed` stores `(k . (old . new))` pairs; preserves `a`'s iteration order.
+  - `kv:partition` — `(store proc)` → `(match . nomatch)` pair of stores; preserves order.
+  - `kv:equal?`  — `(a b)` deep structural equality, ignoring insertion order; size-checked first.
+- **Bump** `kv:version` to `6`. **Extend** `tests/smoke.aura` with **T30–T34b** (8 new tests). Total target: **43/43**.
+- **Do NOT touch**: any Phase 0–6 op, internal alist primitives, export order of existing names, or `kv:_mem`.
+
+### PATCH
+
+FILE projects/kv/lib/kv.aura
+```
+; projects/kv/lib/kv.aura — mini KV store (project-level evolve subject)
+; Phase 0..2: open + set/get + del/has?/size/keys/clear/overwrite.
+; Phase 3:   multi-key stress + isolation.
+; Phase 4:   batch / composite helpers (mset, mget, update, merge, copy).
+; Phase 5:   iteration & query helpers (values, entries, filter, find,
+;             empty?, for-each).
+; Phase 6:   fold / predicate / projection / selection helpers
+;             (reduce, any?, every?, pick, omit, map-values).
+; Phase 7:   convenience / comparison helpers
+;             (get-or, rename, diff, partition, equal?).
+;
+; Store representation: alist of (key . val) pairs.
+;   * Keys are strings.
+;   * Values may be any Aura value (numbers, strings, lists, ...).
+;   * Insertion order is preserved across all operations.
+;   * All operations are functional: each returns a fresh store;
+;     the input store is never mutated.
+;
+; Form order: export before require.
+
+(export kv:version
+        kv:open
+        kv:set
+        kv:get
+        kv:del
+        kv:has?
+        kv:keys
+        kv:size
+        kv:clear
+        kv:mset
+        kv:mget
+        kv:update
+        kv:merge
+        kv:copy
+        kv:values
+        kv:entries
+        kv:filter
+        kv:find
+        kv:empty?
+        kv:for-each
+        kv:reduce
+        kv:any?
+        kv:every?
+        kv:pick
+        kv:omit
+        kv:map-values
+        kv:get-or
+        kv:rename
+        kv:diff
+        kv:partition
+        kv:equal?)
+
+(define kv:version 6)
 
 ; ---------------------------------------------------------------------------
 ; Internal alist primitives.
@@ -767,6 +1239,111 @@ FILE projects/kv/lib/kv.aura
 (define (kv:map-values store proc)
   (kv:_fold store (quote ())
     (lambda (k v acc) (kv:_set acc k (proc v)))))
+
+; ---------------------------------------------------------------------------
+; Phase 7 convenience / comparison helpers.
+; All pure functional, derived from the existing internals; no FS
+; escapes; insertion order preserved by construction.
+; ---------------------------------------------------------------------------
+
+; (kv:get-or store key default) -> value | default.
+; Returns the stored value when `key` is present (even if that value is
+; literally #f), and `default` otherwise. Implemented via kv:_has so a
+; stored #f is distinguishable from a missing key — documented
+; improvement over the raw kv:get / #f-as-miss convention.
+(define (kv:get-or store key default)
+  (if (kv:_has store key)
+    (kv:_ref store key)
+    default))
+
+; (kv:rename store old-key new-key) -> store.
+; Atomically replaces `old-key` with `new-key`, preserving the original
+; insertion position (substituted in place) and keeping every other
+; entry's value + order untouched. No-op when:
+;   * `old-key` is not in `store`, or
+;   * `new-key` is already present (the operation is ambiguous and the
+;     caller would have to choose between overwriting `new-key` and
+;     losing the rename target — refusing is the only safe choice).
+; Note: rename with old-key == new-key is also a no-op by virtue of the
+; second rule above.
+(define (kv:rename store old-key new-key)
+  (if (not (kv:_has store old-key))
+    store
+    (if (kv:_has store new-key)
+      store
+      (kv:_fold store (quote ())
+        (lambda (k v acc)
+          (if (equal? k old-key)
+            (kv:_set acc new-key v)
+            (kv:_set acc k v)))))))
+
+; (kv:diff a b) -> (added removed changed).
+; Three sub-stores describing the set-theoretic / value-level differences
+; from a -> b:
+;   * added   — keys present in b but not in a, with b's values.
+;   * removed — keys present in a but not in b, with a's values.
+;   * changed — keys present in both, with values that differ; entries
+;               are stored as (k . (old-val . new-val)) so the consumer
+;               can distinguish "value changed" from "key added".
+; Iteration order of each sub-store follows the source it was derived
+; from (added/removed follow their respective stores; changed follows
+; `a`). No FS, no mutation.
+(define (kv:diff a b)
+  (let* ((added
+           (kv:_fold b (quote ())
+             (lambda (k v acc)
+               (if (kv:_has a k)
+                 acc
+                 (kv:_set acc k v)))))
+         (removed
+           (kv:_fold a (quote ())
+             (lambda (k v acc)
+               (if (kv:_has b k)
+                 acc
+                 (kv:_set acc k v)))))
+         (changed
+           (kv:_fold a (quote ())
+             (lambda (k va acc)
+               (if (kv:_has b k)
+                 (let ((vb (kv:_ref b k)))
+                   (if (equal? va vb)
+                     acc
+                     (kv:_set acc k (cons va vb))))
+                 acc)))))
+    (list added removed changed)))
+
+; (kv:partition store proc) -> (match . nomatch).
+; Two stores: the entries for which (proc k v) is #t and those for which
+; it is #f. Both sub-stores preserve the original insertion order
+; among their respective survivors. An empty store yields ((() . ())).
+(define (kv:partition store proc)
+  (kv:_fold store (list (quote ()) (quote ()))
+    (lambda (k v acc)
+      (let ((m (car acc))
+            (n (car (cdr acc))))
+        (if (proc k v)
+          (list (kv:_set m k v) n)
+          (list m (kv:_set n k v)))))))
+
+; (kv:equal? a b) -> #t | #f.
+; Deep structural equality of two stores, ignoring insertion order.
+; First checks sizes; then iterates the keys of `a` and verifies each
+; one is present in `b` with a structurally equal value. Symmetric in
+; practice (same key multiset + same per-key values).
+; Note: a stored #f value compares equal to a missing key under a naive
+; implementation; kv:_has is used to keep the check honest.
+(define (kv:equal? a b)
+  (if (= (kv:size a) (kv:size b))
+    (let loop ((xs (kv:keys a)))
+      (if (null? xs)
+        #t
+        (let ((k (car xs)))
+          (if (kv:_has b k)
+            (if (equal? (kv:_ref a k) (kv:_ref b k))
+              (loop (cdr xs))
+              #f)
+            #f))))
+    #f))
 ```
 
 FILE projects/kv/tests/smoke.aura
@@ -1026,6 +1603,108 @@ FILE projects/kv/tests/smoke.aura
           (equal? (car mk) "a")
           (equal? (car (cdr mk)) "b")
           (equal? (car (cdr (cdr mk))) "c"))))
+
+; ---- Phase 7: convenience / comparison helpers ----
+
+; T30: get-or() returns the stored value, or default on miss.
+(let* ((s (kv:set (kv:set (kv:open) "a" 1) "b" 2)))
+  (t "T30-get-or"
+     (and (= (kv:get-or s "a" 99) 1)
+          (= (kv:get-or s "missing" 42) 42)
+          (= (kv:get-or (kv:open) "anything" 7) 7))))
+
+; T30b: get-or() must return the stored value even when that value is #f.
+(t "T30b-get-or-false"
+   (equal? (kv:get-or (kv:set (kv:open) "k" #f) "k" "fallback") #f))
+
+; T31: rename() replaces a key in place, preserving position and other entries.
+(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
+       (r (kv:rename s "b" "bb"))
+       (rk (kv:keys r)))
+  (t "T31-rename"
+     (and (= (kv:size r) 3)
+          (eq? (kv:has? r "b") #f)
+          (equal? (kv:get r "bb") 2)
+          (equal? (kv:get r "a") 1)
+          (equal? (kv:get r "c") 3)
+          (equal? (car rk) "a")
+          (equal? (car (cdr rk)) "bb")
+          (equal? (car (cdr (cdr rk))) "c"))))
+
+; T31b: rename() is a no-op when the old key is absent.
+(t "T31b-rename-noop-missing"
+   (let* ((s (kv:set (kv:open) "a" 1))
+          (r (kv:rename s "ghost" "new")))
+     (and (= (kv:size r) 1)
+          (equal? (kv:get r "a") 1)
+          (eq? (kv:has? r "new") #f))))
+
+; T31c: rename() is a no-op when the new key is already present.
+(t "T31c-rename-noop-exists"
+   (let* ((s (kv:set (kv:set (kv:open) "a" 1) "b" 2))
+          (r (kv:rename s "a" "b")))
+     (and (= (kv:size r) 2)
+          (equal? (kv:get r "a") 1)
+          (equal? (kv:get r "b") 2))))
+
+; T32: diff() classifies entries into added / removed / changed.
+(let* ((a (kv:set (kv:set (kv:set (kv:open) "x" 1) "y" 2) "z" 3))
+       (b (kv:set (kv:set (kv:set (kv:open) "y" 20) "z" 3) "w" 4))
+       (d (kv:diff a b))
+       (added (car d))
+       (removed (car (cdr d)))
+       (changed (car (cdr (cdr d)))))
+  (t "T32-diff"
+     (and (= (kv:size added) 1)
+          (equal? (kv:get added "w") 4)
+          (= (kv:size removed) 1)
+          (equal? (kv:get removed "x") 1)
+          (= (kv:size changed) 1)
+          (equal? (kv:get changed "y") (cons 2 20)))))
+
+; T32b: diff() between equal stores yields three empty sub-stores.
+(let* ((d (kv:diff (kv:set (kv:set (kv:open) "a" 1) "b" 2)
+                   (kv:set (kv:set (kv:open) "b" 2) "a" 1))))
+  (t "T32b-diff-equal"
+     (and (= (kv:size (car d)) 0)
+          (= (kv:size (car (cdr d))) 0)
+          (= (kv:size (car (cdr (cdr d)))) 0))))
+
+; T33: partition() splits a store into (match . nomatch) sub-stores.
+(let* ((s (kv:set (kv:set (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3) "d" 4) "e" 5))
+       (p (kv:partition s (lambda (k v) (> v 2))))
+       (m (car p))
+       (n (car (cdr p))))
+  (t "T33-partition"
+     (and (= (kv:size m) 3)
+          (equal? (kv:get m "c") 3)
+          (equal? (kv:get m "d") 4)
+          (equal? (kv:get m "e") 5)
+          (= (kv:size n) 2)
+          (equal? (kv:get n "a") 1)
+          (equal? (kv:get n "b") 2))))
+
+; T33b: partition() on an empty store yields two empty sub-stores.
+(let* ((p (kv:partition (kv:open) (lambda (k v) #t))))
+  (t "T33b-partition-empty"
+     (and (= (kv:size (car p)) 0)
+          (= (kv:size (car (cdr p))) 0))))
+
+; T34: equal? is a structural equality ignoring insertion order.
+(let* ((a (kv:set (kv:set (kv:open) "a" 1) "b" 2))
+       (b (kv:set (kv:set (kv:open) "b" 2) "a" 1))
+       (c (kv:set (kv:set (kv:open) "a" 1) "b" 2)))
+  (t "T34-equal"
+     (and (kv:equal? a b)
+          (kv:equal? a c)
+          (not (kv:equal? a (kv:set a "c" 3)))
+          (not (kv:equal? a
+                         (kv:set (kv:set (kv:open) "a" 1) "b" 3))))))
+
+; T34b: equal? agrees on empty stores and detects size mismatches.
+(t "T34b-equal-empty"
+   (and (kv:equal? (kv:open) (kv:open))
+        (not (kv:equal? (kv:open) (kv:set (kv:open) "a" 1)))))
 
 (display "SCORE ")
 (display pass)
