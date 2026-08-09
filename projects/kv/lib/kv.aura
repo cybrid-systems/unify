@@ -1,5 +1,15 @@
 ; projects/kv/lib/kv.aura — mini KV store (project-level evolve subject)
-; Phase 0..1: open + set/get + del/has?/size. Phase 2: keys/clear/overwrite.
+; Phase 0..2: open + set/get + del/has?/size/keys/clear/overwrite.
+; Phase 3:   multi-key stress + isolation.
+; Phase 4:   batch / composite helpers (mset, mget, update, merge, copy).
+;
+; Store representation: alist of (key . val) pairs.
+;   * Keys are strings.
+;   * Values may be any Aura value (numbers, strings, lists, ...).
+;   * Insertion order is preserved across all operations.
+;   * All operations are functional: each returns a fresh store;
+;     the input store is never mutated.
+;
 ; Form order: export before require.
 
 (export kv:version
@@ -10,75 +20,149 @@
         kv:has?
         kv:keys
         kv:size
-        kv:clear)
+        kv:clear
+        kv:mset
+        kv:mget
+        kv:update
+        kv:merge
+        kv:copy)
 
-; v1 store = alist of (key . val) pairs; keys are strings.
+(define kv:version 2)
 
-(define kv:version 1)
+; ---------------------------------------------------------------------------
+; Internal alist primitives.
+; Every helper tolerates stray non-pair cells defensively (skips them),
+; which keeps the store robust against accidental bad inputs.
+; ---------------------------------------------------------------------------
+
+; (kv:_ref xs key) -> value | #f
+(define (kv:_ref xs key)
+  (if (null? xs)
+    #f
+    (let ((p (car xs)))
+      (if (and (pair? p) (equal? (car p) key))
+        (cdr p)
+        (kv:_ref (cdr xs) key)))))
+
+; (kv:_has xs key) -> #t | #f
+(define (kv:_has xs key)
+  (if (null? xs)
+    #f
+    (let ((p (car xs)))
+      (if (and (pair? p) (equal? (car p) key))
+        #t
+        (kv:_has (cdr xs) key)))))
+
+; (kv:_set xs key val) -> fresh alist with key mapped to val.
+; If key already exists, it is replaced in place (preserving position).
+; Otherwise it is appended at the end.
+(define (kv:_set xs key val)
+  (if (null? xs)
+    (list (cons key val))
+    (let ((p (car xs)))
+      (if (and (pair? p) (equal? (car p) key))
+        (cons (cons key val) (cdr xs))
+        (cons p (kv:_set (cdr xs) key val))))))
+
+; (kv:_del xs key out) -> fresh alist without `key`, preserving order.
+(define (kv:_del xs key out)
+  (if (null? xs)
+    (reverse out)
+    (let ((p (car xs)))
+      (if (and (pair? p) (equal? (car p) key))
+        (kv:_del (cdr xs) key out)
+        (kv:_del (cdr xs) key (cons p out))))))
+
+; (kv:_fold xs acc f) -> acc; f is (k v acc) -> acc.
+(define (kv:_fold xs acc f)
+  (if (null? xs)
+    acc
+    (let ((p (car xs)))
+      (if (pair? p)
+        (kv:_fold (cdr xs) (f (car p) (cdr p) acc) f)
+        (kv:_fold (cdr xs) acc f)))))
+
+; (kv:_map xs f) -> list; f is (k v) -> any; preserves order.
+(define (kv:_map xs f)
+  (if (null? xs)
+    (quote ())
+    (let ((p (car xs)))
+      (let ((rest (kv:_map (cdr xs) f)))
+        (if (pair? p)
+          (cons (f (car p) (cdr p)) rest)
+          rest)))))
+
+; ---------------------------------------------------------------------------
+; Phase 0..2 public API
+; ---------------------------------------------------------------------------
 
 (define (kv:open)
   (quote ()))
 
 (define (kv:set store key val)
-  (if (not (string? key))
-    store
-    (let loop ((xs store) (out (quote ())) (found #f))
-      (if (null? xs)
-        (if found
-          out
-          (cons (cons key val) out))
-        (let ((p (car xs)))
-          (if (and (pair? p) (equal? (car p) key))
-            (loop (cdr xs) (cons (cons key val) out) #t)
-            (loop (cdr xs) (cons p out) found)))))))
+  (if (string? key)
+    (kv:_set store key val)
+    store))
 
 (define (kv:get store key)
-  (if (not (string? key))
-    #f
-    (let loop ((xs store))
-      (if (null? xs)
-        #f
-        (let ((p (car xs)))
-          (if (and (pair? p) (equal? (car p) key))
-            (cdr p)
-            (loop (cdr xs))))))))
+  (kv:_ref store key))
 
 (define (kv:del store key)
-  (if (not (string? key))
-    store
-    (let loop ((xs store) (out (quote ())))
-      (if (null? xs)
-        (reverse out)
-        (let ((p (car xs)))
-          (if (and (pair? p) (equal? (car p) key))
-            (loop (cdr xs) out)
-            (loop (cdr xs) (cons p out))))))))
+  (kv:_del store key (quote ())))
 
 (define (kv:has? store key)
-  (if (not (string? key))
-    #f
-    (let loop ((xs store))
-      (if (null? xs)
-        #f
-        (let ((p (car xs)))
-          (if (and (pair? p) (equal? (car p) key))
-            #t
-            (loop (cdr xs))))))))
+  (kv:_has store key))
 
 (define (kv:keys store)
-  (let loop ((xs store) (out (quote ())))
-    (if (null? xs)
-      (reverse out)
-      (let ((p (car xs)))
-        (if (pair? p)
-          (loop (cdr xs) (cons (car p) out))
-          (loop (cdr xs) out))))))
+  (kv:_map store (lambda (k v) k)))
 
 (define (kv:size store)
-  (let loop ((xs store) (n 0))
-    (if (null? xs)
-      n
-      (loop (cdr xs) (+ n 1)))))
+  (kv:_fold store 0 (lambda (k v n) (+ n 1))))
 
 (define (kv:clear store)
   (quote ()))
+
+; ---------------------------------------------------------------------------
+; Phase 4 batch / composite helpers
+; ---------------------------------------------------------------------------
+
+; (kv:mset store '((k . v) ...)) -> store
+; Apply kv:set for each pair in `alist`, in the order given.
+; New keys are appended at the end; existing keys are replaced in place.
+(define (kv:mset store alist)
+  (let loop ((xs alist) (acc store))
+    (if (null? xs)
+      acc
+      (let ((p (car xs)))
+        (if (pair? p)
+          (loop (cdr xs) (kv:_set acc (car p) (cdr p)))
+          (loop (cdr xs) acc))))))
+
+; (kv:mget store '("k" ...)) -> list of values (or #f for misses),
+; in the same order as the input keys.
+(define (kv:mget store keys)
+  (let loop ((xs keys) (out (quote ())))
+    (if (null? xs)
+      (reverse out)
+      (loop (cdr xs) (cons (kv:_ref store (car xs)) out)))))
+
+; (kv:update store key default proc) -> store
+; `proc` is (val) -> new-val.
+; If key exists, `proc` receives the current value; otherwise it receives
+; `default`. The store is then set to (proc ...).
+(define (kv:update store key default proc)
+  (if (kv:_has store key)
+    (kv:_set store key (proc (kv:_ref store key)))
+    (kv:_set store key (proc default))))
+
+; (kv:merge a b) -> store
+; Right-biased union. a's insertion order is preserved; b's keys fold in
+; over a, with b winning on conflicts and b-only keys appended at the end
+; in b's iteration order.
+(define (kv:merge a b)
+  (kv:mset a (kv:_map b (lambda (k v) (cons k v)))))
+
+; (kv:copy store) -> store
+; The store is already an immutable value, so this is the identity.
+; Provided for API symmetry / explicit-isolation clarity.
+(define (kv:copy store) store)

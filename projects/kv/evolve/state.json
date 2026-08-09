@@ -1,6 +1,6 @@
 {
   "project": "projects/kv",
-  "generation": 2,
+  "generation": 3,
   "best_score": 17,
   "best_total": 17,
   "status": "ok",
@@ -20,7 +20,15 @@
       "reason": "full-green",
       "baseline": "17/17",
       "candidate": "17/17"
+    },
+    {
+      "ts": "2026-08-09T05:22Z",
+      "generation": 3,
+      "accepted": true,
+      "reason": "full-green",
+      "baseline": "17/17",
+      "candidate": "17/17"
     }
   ],
-  "updated": "2026-08-09T05:19Z"
+  "updated": "2026-08-09T05:22Z"
 }
