@@ -1,7 +1,7 @@
 ; Auto-generated explore subject (string truth after multi-cand select)
-; generation=40 updated=2026-08-09T13:52Z
-; last_axis=hop last_span=hermes
-(define score (lambda (x) (+ (* x x x) (* x x))))
+; generation=41 updated=2026-08-09T13:55Z
+; last_axis=score last_span=aether
+(define score (lambda (x) (+ (- (* x x x) (* x x)) x)))
 (define kernel (lambda (n) (/ (* n (- n 1)) 2)))
 (define leaf (lambda (x) (* x 1)))
 (define hop (lambda (i) (if (= i 0) 1 (if (= i 1) 2 0))))
