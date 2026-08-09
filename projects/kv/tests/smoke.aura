@@ -485,6 +485,97 @@
           (equal? (kv:get s3 "x") 1)
           (equal? (kv:get s3 "y") 2))))
 
+; ---- Phase 9: aggregation / positional / composition helpers ----
+
+; T43: nth() returns the 0-indexed entry; #f on out-of-range / empty.
+(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
+       (n0 (kv:nth s 0))
+       (n1 (kv:nth s 1))
+       (n2 (kv:nth s 2)))
+  (t "T43-nth"
+     (and (pair? n0)
+          (equal? (car n0) "a")
+          (equal? (cdr n0) 1)
+          (pair? n1)
+          (equal? (car n1) "b")
+          (equal? (cdr n1) 2)
+          (pair? n2)
+          (equal? (car n2) "c")
+          (equal? (cdr n2) 3)
+          (eq? (kv:nth s 3) #f)
+          (eq? (kv:nth s 100) #f)
+          (eq? (kv:nth (kv:open) 0) #f))))
+
+; T44: count() returns the number of matching entries; 0 on miss / empty.
+(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 5) "c" 10)))
+  (t "T44-count"
+     (and (= (kv:count s (lambda (k v) (> v 3))) 2)
+          (= (kv:count s (lambda (k v) (> v 100))) 0)
+          (= (kv:count s (lambda (k v) (> v 0))) 3)
+          (= (kv:count (kv:open) (lambda (k v) #t)) 0))))
+
+; T45: sum() returns the total of all values; 0 on empty.
+(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3)))
+  (t "T45-sum"
+     (and (= (kv:sum s) 6)
+          (= (kv:sum (kv:open)) 0))))
+
+; T46: zip() pairs keys with vals left-to-right; insertion order tracks keys.
+(let* ((z (kv:zip (list "a" "b" "c") (list 1 2 3)))
+       (zk (kv:keys z)))
+  (t "T46-zip"
+     (and (= (kv:size z) 3)
+          (equal? (kv:get z "a") 1)
+          (equal? (kv:get z "b") 2)
+          (equal? (kv:get z "c") 3)
+          (equal? (car zk) "a")
+          (equal? (car (cdr zk)) "b")
+          (equal? (car (cdr (cdr zk))) "c"))))
+
+; T46b: zip() with a shorter vals list drops the tail keys.
+(t "T46b-zip-vals-shorter"
+   (let* ((z (kv:zip (list "a" "b" "c") (list 1 2))))
+     (and (= (kv:size z) 2)
+          (equal? (kv:get z "a") 1)
+          (equal? (kv:get z "b") 2)
+          (eq? (kv:get z "c") #f))))
+
+; T46c: zip() with a shorter keys list drops the tail vals.
+(t "T46c-zip-keys-shorter"
+   (let* ((z (kv:zip (list "a") (list 1 2 3))))
+     (and (= (kv:size z) 1)
+          (equal? (kv:get z "a") 1))))
+
+; T47: swap() exchanges two values, preserves order and other entries.
+(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
+       (sw (kv:swap s "a" "c"))
+       (sk (kv:keys sw)))
+  (t "T47-swap"
+     (and (= (kv:size sw) 3)
+          (equal? (kv:get sw "a") 3)
+          (equal? (kv:get sw "b") 2)
+          (equal? (kv:get sw "c") 1)
+          (equal? (car sk) "a")
+          (equal? (car (cdr sk)) "b")
+          (equal? (car (cdr (cdr sk))) "c"))))
+
+; T47b: swap() with k1 == k2 is a no-op (same input, same output).
+(t "T47b-swap-same-key"
+   (let* ((s (kv:set (kv:set (kv:open) "a" 1) "b" 2))
+          (sw (kv:swap s "a" "a")))
+     (and (= (kv:size sw) 2)
+          (equal? (kv:get sw "a") 1)
+          (equal? (kv:get sw "b") 2))))
+
+; T47c: swap() with a missing key is a no-op.
+(t "T47c-swap-missing"
+   (let* ((s (kv:set (kv:set (kv:open) "a" 1) "b" 2))
+          (sw (kv:swap s "a" "ghost")))
+     (and (= (kv:size sw) 2)
+          (equal? (kv:get sw "a") 1)
+          (equal? (kv:get sw "b") 2)
+          (eq? (kv:get sw "ghost") #f))))
+
 (display "SCORE ")
 (display pass)
 (display "/")

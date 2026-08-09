@@ -11,6 +11,8 @@
 ; Phase 8:   positional / conditional / inversion helpers
 ;             (first, last, rest, butlast, take, drop, invert,
 ;             set-if-absent).
+; Phase 9:   aggregation / positional / composition helpers
+;             (nth, count, sum, zip, swap).
 ;
 ; Store representation: alist of (key . val) pairs.
 ;   * Keys are strings.
@@ -59,9 +61,14 @@
         kv:take
         kv:drop
         kv:invert
-        kv:set-if-absent)
+        kv:set-if-absent
+        kv:nth
+        kv:count
+        kv:sum
+        kv:zip
+        kv:swap)
 
-(define kv:version 7)
+(define kv:version 9)
 
 ; ---------------------------------------------------------------------------
 ; Internal alist primitives.
@@ -558,3 +565,93 @@
       store
       (kv:_set store key val))
     store))
+
+; ---------------------------------------------------------------------------
+; Phase 9 aggregation / positional / composition helpers.
+; Pure functional; insertion order preserved by construction; no FS
+; escapes. All derive from the existing alist primitives.
+;
+; Conventions:
+;   * `kv:nth` is 0-indexed and walks the alist left-to-right, skipping
+;     non-pair cells defensively. Out-of-range or empty returns `#f`.
+;   * `kv:count` and `kv:sum` are reductions over entries in insertion
+;     order; the empty store yields the additive identity (`0`) so the
+;     result composes naturally with `+` and `reduce`.
+;   * `kv:zip` walks its two input lists in parallel and stops at the
+;     shorter one — extras on either side are silently dropped.
+;   * `kv:swap` is a single atomic-looking operation: it reads both
+;     values up front, then folds the original store to produce a fresh
+;     one. No-op when k1 == k2 or either key is absent (consistent with
+;     kv:rename's refusal semantics for ambiguous writes).
+; ---------------------------------------------------------------------------
+
+; (kv:nth store n) -> (k . v) | #f.
+; 0-indexed; returns the n-th pair in insertion order, or #f when n is
+; out of range or the store is empty. Skips non-pair cells defensively
+; (a stray cell never counts toward n). O(n) walk; consistent with the
+; "head is O(1), tail is O(n)" posture used by Phase 8.
+(define (kv:nth store n)
+  (if (null? store)
+    #f
+    (let ((p (car store)))
+      (if (pair? p)
+        (if (= n 0) p (kv:nth (cdr store) (- n 1)))
+        (kv:nth (cdr store) n)))))
+
+; (kv:count store proc) -> integer.
+; Number of entries for which (proc k v) is #t. Empty store returns 0.
+; Equivalent to (kv:size (kv:filter store proc)) but avoids allocating
+; the intermediate store — a hot-path-friendly form.
+(define (kv:count store proc)
+  (kv:_fold store 0
+    (lambda (k v acc)
+      (if (proc k v) (+ acc 1) acc))))
+
+; (kv:sum store) -> integer.
+; Sum of all values in insertion order (assumed numeric). Empty store
+; returns 0 (additive identity), so (kv:sum s) composes cleanly with +
+; and with kv:reduce for custom aggregations.
+(define (kv:sum store)
+  (kv:_fold store 0 (lambda (k v acc) (+ acc v))))
+
+; (kv:zip keys vals) -> store.
+; Build a store by pairing `keys` with `vals` left-to-right. Stops at
+; the shorter list; extras on either side are silently dropped.
+; Insertion order of the resulting store follows `keys`. Uses the
+; internal primitive kv:_set so each pair is appended at the end of
+; the accumulator in source order — no reversal required. No
+; string?-key validation (matches kv:mset's posture: zip is a
+; projection / constructor over caller-supplied data, not a fresh
+; kv:set write).
+(define (kv:zip keys vals)
+  (let loop ((ks keys) (vs vals) (acc (quote ())))
+    (if (or (null? ks) (null? vs))
+      acc
+      (loop (cdr ks) (cdr vs) (kv:_set acc (car ks) (car vs))))))
+
+; (kv:swap store k1 k2) -> store.
+; Atomically swap the values at k1 and k2. Other entries' values and
+; insertion order are preserved. No-op (returns store unchanged) when:
+;   * k1 == k2 (swapping with self is the identity), or
+;   * either key is absent from the store (refuses to invent values
+;     for missing slots — consistent with kv:rename's ambiguity rule).
+; Implementation reads both values up front from the original store,
+; then folds the original entries into a fresh store, writing k1 -> v2
+; and k2 -> v1 — guarantees a single, atomic-looking pass over the
+; source entries.
+(define (kv:swap store k1 k2)
+  (if (equal? k1 k2)
+    store
+    (if (not (kv:_has store k1))
+      store
+      (if (not (kv:_has store k2))
+        store
+        (let ((v1 (kv:_ref store k1))
+              (v2 (kv:_ref store k2)))
+          (kv:_fold store (quote ())
+            (lambda (k v acc)
+              (if (equal? k k1)
+                (kv:_set acc k1 v2)
+                (if (equal? k k2)
+                  (kv:_set acc k2 v1)
+                  (kv:_set acc k v))))))))))

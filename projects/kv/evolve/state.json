@@ -1,8 +1,8 @@
 {
   "project": "projects/kv",
-  "generation": 8,
-  "best_score": 57,
-  "best_total": 57,
+  "generation": 9,
+  "best_score": 66,
+  "best_total": 66,
   "status": "ok",
   "history": [
     {
@@ -83,9 +83,20 @@
       "candidate": "57/57",
       "review": "- All 46/46 tests are green; Phases 0\u20137 of the in-file roadmap (open/set/get \u2192 equal?) are locked in.\n- Pure Aura throughout, alist-of-cons representation with defensive skipping of non-pair cells; insertion order preserved by every op; no FS / no network / no host escape.\n- Export-before-define discipline intact; API names stable since v1; `kv:equal?` correctly distinguishes `#f` values from misses; `kv:pick` walks the *store* (insertion-order by construction); `kv:rename` is a true no-op on co",
       "direction": "- **Target phase: Phase 8 \u2014 positional / conditional / inversion helpers.** Same denseness posture (pure Aura, derived from existing `_fold`/`_set`/`_has` primitives), keeps T1\u2013T34b green, advances SPEC beyond Phase 7.\n- **Ops to add (8 new, all pure, all derive from existing primitives; export-before-define preserved; no FS escapes):**\n  - `kv:first`    \u2014 first `(k . v)`, `#f` on empty\n  - `kv:last`     \u2014 last `(k . v)`, `#f` on empty\n  - `kv:rest`     \u2014 store minus first entry; `()` on empty\n "
+    },
+    {
+      "ts": "2026-08-09T05:42Z",
+      "phase": "control-loop",
+      "generation": 9,
+      "accepted": true,
+      "reason": "score-improved",
+      "baseline": "57/57",
+      "candidate": "66/66",
+      "review": "- **Strengths:** 57/57 already green across Phases 0\u20138 (open/set/get \u2192 set-if-absent). The alist-of-cons representation is defensive (skips stray non-pair cells), insertion order is preserved by every op, all ops are pure functional, no FS / network / host escape used. Export-before-define discipline is intact, API names are stable, the `kv:pick` ordering bug from g6 is fixed, and `kv:rename` / `kv:swap`-style \"refuse on ambiguity\" semantics are consistent.\n- **Failures / Risks:** `kv:version` i",
+      "direction": "- **Target phase: Phase 9 \u2014 aggregation / positional / composition helpers.** Same posture as Phase 8 (pure Aura, derived from existing alist primitives, insertion-order preserved by construction, no FS escapes, no API renames). Keeps all T1\u2013T42 green.\n- **Ops to add (5 new):**\n  - `kv:nth`  \u2014 `(store n)` 0-indexed entry, `#f` on out-of-range / empty; skips non-pair cells defensively\n  - `kv:count` \u2014 `(store proc)` number of matching entries; 0 on empty (avoids allocating an intermediate filter "
     }
   ],
-  "updated": "2026-08-09T05:38Z",
-  "last_review": "- All 46/46 tests are green; Phases 0\u20137 of the in-file roadmap (open/set/get \u2192 equal?) are locked in.\n- Pure Aura throughout, alist-of-cons representation with defensive skipping of non-pair cells; insertion order preserved by every op; no FS / no network / no host escape.\n- Export-before-define discipline intact; API names stable since v1; `kv:equal?` correctly distinguishes `#f` values from misses; `kv:pick` walks the *store* (insertion-order by construction); `kv:rename` is a true no-op on collision.\n- Failure / risk: nothing failing \u2014 but the project has now consumed every phase enumerated in the in-file roadmap (0..7). SPEC's explicit roadmap only goes to Phase 4 (batch helpers), so the controller is well past it. The next move is **advance SPEC further** by adding a coherent new capability that is still pure Aura, still derived from existing internals, and still keeps T1\u2013T34b green.",
-  "last_direction": "- **Target phase: Phase 8 \u2014 positional / conditional / inversion helpers.** Same denseness posture (pure Aura, derived from existing `_fold`/`_set`/`_has` primitives), keeps T1\u2013T34b green, advances SPEC beyond Phase 7.\n- **Ops to add (8 new, all pure, all derive from existing primitives; export-before-define preserved; no FS escapes):**\n  - `kv:first`    \u2014 first `(k . v)`, `#f` on empty\n  - `kv:last`     \u2014 last `(k . v)`, `#f` on empty\n  - `kv:rest`     \u2014 store minus first entry; `()` on empty\n  - `kv:butlast`  \u2014 store minus last entry; `()` on empty\n  - `kv:take`     \u2014 first `n` entries; `n>=size` \u2192 whole store\n  - `kv:drop`     \u2014 drop first `n` entries; `n>=size` \u2192 empty\n  - `kv:invert`   \u2014 swap keys/values; first-wins on value collision\n  - `kv:set-if-absent` \u2014 only sets when key missing\n- Bump `kv:version` 6 \u2192 7.\n- **What NOT to touch**: existing primitives, existing tests, the kv:_set/kv:_has string-key discipline on `kv:set` (keep `kv:set-if-absent` consistent). No FS / no host e"
+  "updated": "2026-08-09T05:42Z",
+  "last_review": "- **Strengths:** 57/57 already green across Phases 0\u20138 (open/set/get \u2192 set-if-absent). The alist-of-cons representation is defensive (skips stray non-pair cells), insertion order is preserved by every op, all ops are pure functional, no FS / network / host escape used. Export-before-define discipline is intact, API names are stable, the `kv:pick` ordering bug from g6 is fixed, and `kv:rename` / `kv:swap`-style \"refuse on ambiguity\" semantics are consistent.\n- **Failures / Risks:** `kv:version` is still 7 even though Phase 8 is fully implemented (bookkeeping drift \u2014 fixable in the same patch). No real \"host escape\" risk to stress; SPEC table only enumerates through Phase 4, so we're already ahead of the published roadmap \u2014 pure-Aura denseness posture means there's still room to add small composable ops without leaking any new host dependency. No actual test failures to fix.\n- **Denseness posture:** All new helpers should be derived from the existing `_fold`/`_set`/`_has`/`_ref` primitives, preserve insertion order, refuse on ambiguity rather than guessing, and be tested in `tests/smoke.aura` while every prior test stays green.",
+  "last_direction": "- **Target phase: Phase 9 \u2014 aggregation / positional / composition helpers.** Same posture as Phase 8 (pure Aura, derived from existing alist primitives, insertion-order preserved by construction, no FS escapes, no API renames). Keeps all T1\u2013T42 green.\n- **Ops to add (5 new):**\n  - `kv:nth`  \u2014 `(store n)` 0-indexed entry, `#f` on out-of-range / empty; skips non-pair cells defensively\n  - `kv:count` \u2014 `(store proc)` number of matching entries; 0 on empty (avoids allocating an intermediate filter store)\n  - `kv:sum`  \u2014 `(store)` sum of values; 0 on empty (additive identity so it composes with `+` / `reduce`)\n  - `kv:zip`  \u2014 `(keys vals)` build store by pairing left-to-right, stop at shorter list, insertion order follows `keys`\n  - `kv:swap` \u2014 `(store k1 k2)` atomic swap of two values; no-op when `k1 == k2` or either key is absent (consistent with `kv:rename`'s ambiguity-refusal rule)\n- **Bump `kv:version` to 9** (also fixes the bookkeeping drift from Phase 8). Don't touch any existing op"
 }
