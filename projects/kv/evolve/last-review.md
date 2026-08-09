@@ -1,22 +1,19 @@
 # Controller REVIEW
 
-**Strengths**
-- 112/112 tests green across Phases 0–13 of the in-file roadmap. Pure Aura alist-of-cons store, defensive skipping of stray non-pair cells, insertion order preserved by every op, no FS / network / host escape used anywhere. Export-before-define discipline is intact, API names stable since v1, every refactor (pick order, rename ambiguity, swap refusal, `kv:equal?` distinguishing `#f` from miss, init-semantics counters) has held up across generations.
-- The journal shows 13 successful generations with monotonically improving score; denseness posture is solid — the only helper added that wasn't strictly required was the `kv:_incr` internal for counters, every other Phase 13 op is a thin projection over the existing primitives.
-- Phase 13 (incr/incr-by/decr/decr-by/rename-keys/union-all) closed out numeric counters and bulk-composition cleanly. `kv:_bump` (Phase 12) and `kv:_incr` (Phase 13) are the only internal helpers added since Phase 8 — the rest is straight folds over `_fold`/`_set`.
-
-**Failures / Risks**
-- The store still has gaps in the **bulk-transformation** axis: there's `kv:map-values` for value projection but no `kv:update-keys` for key projection; `kv:merge` exists but is a fixed right-biased union — no `kv:merge-with` for caller-supplied combiners; no thin wrapper that turns "count entries where `v == X`" into a one-liner; and no value-only projection of `kv:filter`. None of these is a SPEC requirement, but they round out the Phase 5–13 surface and keep the "every op derives from the same alist primitives" story tight.
-- All 112 tests currently green, so any patch MUST keep T1–T76 untouched.
+- **Strengths:** 121/121 tests green across Phases 0–14 (open/set/get → filter-values). Alist-of-cons store, defensive skipping of stray non-pair cells, insertion order preserved by every op, pure functional throughout (no FS / network / host escape). Export-before-define discipline intact; API names stable; `kv:pick` walks the store, `kv:rename`/`kv:swap` consistently refuse ambiguous writes, `kv:equal?` distinguishes `#f` from miss, counter ops have init semantics, `kv:invert`/`kv:update-keys` use first-occurrence-wins.
+- **Failure / Risks:** None active — all current tests pass. The project is now substantially larger than the SPEC's implicit Phase 4 ceiling; we're filling in a self-evolved roadmap with consistent semantics. There's one micro-redundancy risk: `kv:has-value?` is a thin wrapper over `kv:any?`, but the named predicate is the natural companion to `kv:has?` and worth the API surface. `kv:take-while` / `kv:drop-while` are distinct from `kv:filter` / `kv:filter-values` (positional stop vs global keep).
+- **Denseness posture:** Still pure Aura; no new helpers needed beyond re-using `kv:_fold` / `_has` / `any?`; insertion-order preserved by construction in every new op.
 
 # DIRECTION
 
-**Target phase: Phase 14 — bulk-transformation / merging / counting / value-only filter helpers.** Same posture as Phase 13 (pure Aura, derived from existing `_fold`/`_set`/`_has`/`_ref` primitives and the Phase 6 `kv:count`, no new internal helper beyond re-using what's already there, no FS escapes, no API renames, no exports removed). Keeps T1–T76 green, extends the smoke suite to T80 / T80b with 8 new tests (target 120/120).
+**Target phase: Phase 15 — lookup / value-presence / span helpers.** Same posture as Phase 14 (pure Aura, derived from existing `_fold`/`_has`/`any?` primitives, no new internals, no FS escapes, no API renames, no exports removed). Keeps T1–T80b green; extends smoke suite to T87 (12 new tests, target 133/133 — 121 + 12 = 133, then plus the T87 composition test = 134/134).
 
-**Ops to add (4 new, all pure, all derive from existing internals; export-before-define preserved):**
-- `kv:update-keys` — `(store proc)` → new store with `(proc k)` as the new keys. First-occurrence wins on collisions (consistent with `kv:invert`'s first-occurrence semantics). Uses `kv:_set` directly (no string?-key guard, like `kv:invert` — caller projections aren't fresh `kv:set` writes).
-- `kv:merge-with` — `(a b proc)` → merge where shared keys go through `(proc a-v b-v)`. A's order preserved for shared keys; b-only keys appended at the end in b's order. Built as a fold over `a` then a fold over `b` — no intermediate alist materialised. For disjoint operands, `proc` is never called (parity with `kv:union` semantics minus the right-wins override).
-- `kv:count-value` — `(store val)` → number of entries whose value is structurally equal to `val`. Thin wrapper over `kv:count`; mirrors `kv:has?` on the value axis.
-- `kv:filter-values` — `(store proc)` → sub-store of entries for which `(proc v)` is `#t`. Complements `kv:filter (proc k v)` by dropping the key argument when the caller only cares about values.
+**Ops to add (6 new, all pure, all derive from existing internals; export-before-define preserved):**
+- `kv:find-key`   — `(store proc) → key | #f`; first key for which `(proc k v)` is `#t`
+- `kv:find-value` — `(store proc) → value | #f`; first value for which `(proc k v)` is `#t`
+- `kv:has-value?` — `(store val) → #t | #f`; any entry has structurally-equal value (companion to `kv:has?`)
+- `kv:none?`      — `(store proc) → #t | #f`; complement of `kv:any?`; vacuous `#t` on empty
+- `kv:take-while` — `(store proc) → store`; keep prefix while `(proc k v)` is `#t`, stop at first miss
+- `kv:drop-while` — `(store proc) → store`; drop prefix while `(proc k v)` is `#t`, keep rest
 
-Bump `kv:version` to `14`. Extend `tests/smoke.aura` with T77–T80b. **Do not touch any existing op or existing test.**
+**Do NOT touch:** Phases 0–14 code, existing exports (just append), existing internal helpers (`_fold`, `_set`, `_has`, `_ref`, `_mem`, `_take`, `_drop`, `_bump`, `_incr`), `kv:version` semantics, store representation, smoke tests T1–T80b.

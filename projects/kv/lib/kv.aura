@@ -23,6 +23,9 @@
 ;             (incr, incr-by, decr, decr-by, rename-keys, union-all).
 ; Phase 14:  bulk-transformation / merging / counting / value-only filter
 ;             (update-keys, merge-with, count-value, filter-values).
+; Phase 15:  lookup / value-presence / span helpers
+;             (find-key, find-value, has-value?, none?,
+;             take-while, drop-while).
 ;
 ; Store representation: alist of (key . val) pairs.
 ;   * Keys are strings.
@@ -98,9 +101,15 @@
         kv:update-keys
         kv:merge-with
         kv:count-value
-        kv:filter-values)
+        kv:filter-values
+        kv:find-key
+        kv:find-value
+        kv:has-value?
+        kv:none?
+        kv:take-while
+        kv:drop-while)
 
-(define kv:version 14)
+(define kv:version 15)
 
 ; ---------------------------------------------------------------------------
 ; Internal alist primitives.
@@ -1211,3 +1220,132 @@
       (if (proc v)
         (kv:_set acc k v)
         acc))))
+
+; ---------------------------------------------------------------------------
+; Phase 15 lookup / value-presence / span helpers.
+; Pure functional; insertion order preserved by construction; no FS
+; escapes; no API renames; no exports removed. All derive from existing
+; alist primitives (`_fold`, `_has`) and the Phase 6 public ops
+; (`kv:any?`) — no new internal helpers required.
+;
+; Conventions:
+;   * `kv:find-key` / `kv:find-value` are sibling projections of
+;     `kv:find`: same short-circuit left-to-right walk, same `#f`
+;     sentinel for "no match", same defensive-skip posture for stray
+;     non-pair cells. `kv:find` returns the (k . v) pair; these two
+;     project out one side. The same `#f` ambiguity as `kv:get`
+;     applies: a stored `#f` value is indistinguishable from a miss
+;     under `kv:find-value`.
+;   * `kv:has-value?` is a thin wrapper over `kv:any?`: true iff at
+;     least one entry's value is structurally equal to `val`. Together
+;     with `kv:has?` it covers "presence on either axis" without
+;     forcing the caller to write `(lambda (k v) (equal? v val))`.
+;   * `kv:none?` is the named complement of `kv:any?` — equivalent
+;     to `(not (kv:any? store proc))` but provided under a name so
+;     callers don't pay for the boolean flip and the symmetric API
+;     reads cleanly alongside `kv:any?` / `kv:every?`. Vacuous `#t`
+;     on an empty store (no entry can satisfy anything).
+;   * `kv:take-while` / `kv:drop-while` are positional span
+;     decompositions: they respect insertion order and stop at the
+;     FIRST false predicate (or the end of the store). Together they
+;     partition the source into (prefix . suffix) under any given
+;     proc; the boundary entry (first false) belongs to the suffix,
+;     not the prefix. Both skip stray non-pair cells defensively
+;     in the prefix-walk; the suffix is returned as-is once the
+;     predicate fails (so a defensive artifact after the boundary
+;     is preserved in `drop-while`'s output).
+; ---------------------------------------------------------------------------
+
+; (kv:find-key store proc) -> key | #f.
+; First key for which (proc k v) is #t. Short-circuits left-to-right;
+; #f on miss / empty. Skips non-pair cells defensively. Companion
+; projection of kv:find (which returns the pair); same walk, same
+; sentinel, no extra allocation beyond the recursion stack.
+(define (kv:find-key store proc)
+  (if (null? store)
+    #f
+    (let ((p (car store)))
+      (if (and (pair? p) (proc (car p) (cdr p)))
+        (car p)
+        (kv:find-key (cdr store) proc)))))
+
+; (kv:find-value store proc) -> value | #f.
+; First value for which (proc k v) is #t. Short-circuits
+; left-to-right; #f on miss / empty. Skips non-pair cells
+; defensively. Note: a stored #f value is indistinguishable from a
+; miss — same limitation as kv:get / kv:find (the boundary case is
+; intrinsic to using #f as the "no value" sentinel).
+(define (kv:find-value store proc)
+  (if (null? store)
+    #f
+    (let ((p (car store)))
+      (if (and (pair? p) (proc (car p) (cdr p)))
+        (cdr p)
+        (kv:find-value (cdr store) proc)))))
+
+; (kv:has-value? store val) -> #t | #f.
+; True iff at least one entry's value is structurally equal to val.
+; Thin wrapper over kv:any?; provided for symmetry with kv:has?
+; (key-presence) — together they cover "presence on either axis"
+; without forcing the caller to write (lambda (k v) (equal? v val)).
+; A stored #f value matches an argument of #f; empty store is #f.
+(define (kv:has-value? store val)
+  (kv:any? store (lambda (k v) (equal? v val))))
+
+; (kv:none? store proc) -> #t | #f.
+; True iff no entry satisfies (proc k v). Short-circuits on the
+; first hit. Vacuous #t on an empty store (no entry can satisfy
+; anything). Named complement of kv:any? — provided for symmetry
+; with kv:any? / kv:every? so the predicate trio reads cleanly
+; without forcing the caller to negate. Skips non-pair cells
+; defensively, same posture as the rest of the family.
+(define (kv:none? store proc)
+  (if (null? store)
+    #t
+    (let ((p (car store)))
+      (if (and (pair? p) (proc (car p) (cdr p)))
+        #f
+        (kv:none? (cdr store) proc)))))
+
+; (kv:take-while store proc) -> store.
+; Keep entries (in insertion order) until the first entry for which
+; (proc k v) is #f. Stops at that entry — it is NOT included. The
+; boundary belongs to the suffix (returned by kv:drop-while), not
+; to the prefix. Empty input → empty output; an all-true proc yields
+; the whole store. Non-pair cells are skipped defensively in the
+; prefix-walk (they never count as the "stop" signal — they are not
+; real entries and have no (k, v) pair to test). Implemented as a
+; direct loop that builds the result in reverse and unflips at the
+; end (O(n) walk, single allocation).
+(define (kv:take-while store proc)
+  (let loop ((xs store) (acc (quote ())))
+    (if (null? xs)
+      (reverse acc)
+      (let ((p (car xs)))
+        (if (pair? p)
+          (if (proc (car p) (cdr p))
+            (loop (cdr xs) (cons p acc))
+            (reverse acc))
+          (loop (cdr xs) acc))))))
+
+; (kv:drop-while store proc) -> store.
+; Drop entries (in insertion order) while (proc k v) is #t. Stops
+; at the first entry for which proc is #f (or the end of the store)
+; and returns the rest, preserving its original order. Empty input
+; → empty output; an all-true proc yields an empty output. Non-pair
+; cells in the dropped prefix are skipped defensively (never counted
+; as the stop signal); once the prefix is dropped, the tail is
+; returned as-is (preserving any stray cells). Complements
+; kv:take-while: (kv:union (kv:take-while s p) (kv:drop-while s p))
+; is structurally equal to s for any proc p (the boundary entry, if
+; any, is on the drop-while side by construction).
+(define (kv:drop-while store proc)
+  (let loop ((xs store))
+    (if (null? xs)
+      (quote ())
+      (let ((p (car xs)))
+        (if (pair? p)
+          (if (proc (car p) (cdr p))
+            (loop (cdr xs))
+            xs)
+          (loop (cdr xs)))))))

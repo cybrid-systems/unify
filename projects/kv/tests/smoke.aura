@@ -1078,6 +1078,122 @@
 (t "T80b-filter-values-empty"
    (= (kv:size (kv:filter-values (kv:open) (lambda (v) #t))) 0))
 
+; ---- Phase 15: lookup / value-presence / span helpers ----
+
+; T81: find-key() returns the first key for which proc(k,v) is #t;
+; #f on miss / empty.
+(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 5) "c" 10)))
+  (t "T81-find-key"
+     (and (equal? (kv:find-key s (lambda (k v) (> v 3))) "b")
+          (eq? (kv:find-key s (lambda (k v) (> v 100))) #f)
+          (eq? (kv:find-key (kv:open) (lambda (k v) #t)) #f))))
+
+; T81b: find-key() on an empty store is #f.
+(t "T81b-find-key-empty"
+   (eq? (kv:find-key (kv:open) (lambda (k v) #t)) #f))
+
+; T82: find-value() returns the first value for which proc(k,v) is #t;
+; #f on miss / empty.
+(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 5) "c" 10)))
+  (t "T82-find-value"
+     (and (equal? (kv:find-value s (lambda (k v) (> v 3))) 5)
+          (eq? (kv:find-value s (lambda (k v) (> v 100))) #f)
+          (eq? (kv:find-value (kv:open) (lambda (k v) #t)) #f))))
+
+; T82b: find-value() on an empty store is #f.
+(t "T82b-find-value-empty"
+   (eq? (kv:find-value (kv:open) (lambda (k v) #t)) #f))
+
+; T83: has-value? checks for structurally-equal value presence.
+(let* ((s (kv:set (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 1) "d" 3)))
+  (t "T83-has-value?"
+     (and (kv:has-value? s 1)
+          (kv:has-value? s 2)
+          (kv:has-value? s 3)
+          (not (kv:has-value? s 99))
+          (not (kv:has-value? (kv:open) 1)))))
+
+; T84: none? is the named complement of any?; vacuous #t on empty.
+(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 5) "c" 10)))
+  (t "T84-none?"
+     (and (kv:none? s (lambda (k v) (> v 100)))
+          (not (kv:none? s (lambda (k v) (> v 3))))
+          (kv:none? (kv:open) (lambda (k v) #t)))))
+
+; T85: take-while() keeps entries while proc is #t; stops at first miss
+; (the boundary entry belongs to drop-while's side, not take-while's).
+(let* ((s (kv:set (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 5) "d" 10))
+       (r (kv:take-while s (lambda (k v) (< v 5))))
+       (rk (kv:keys r)))
+  (t "T85-take-while"
+     (and (= (kv:size r) 2)
+          (equal? (kv:get r "a") 1)
+          (equal? (kv:get r "b") 2)
+          (eq? (kv:get r "c") #f)
+          (eq? (kv:get r "d") #f)
+          (equal? (car rk) "a")
+          (equal? (car (cdr rk)) "b"))))
+
+; T85b: take-while() with an always-true proc returns the full store.
+(t "T85b-take-while-all-true"
+   (let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
+          (r (kv:take-while s (lambda (k v) #t))))
+     (and (= (kv:size r) 3)
+          (equal? (kv:get r "a") 1)
+          (equal? (kv:get r "c") 3))))
+
+; T85c: take-while() with an always-false proc returns an empty store.
+(t "T85c-take-while-all-false"
+   (null? (kv:take-while (kv:set (kv:set (kv:open) "a" 1) "b" 2)
+                         (lambda (k v) #f))))
+
+; T85d: take-while() on an empty store is empty.
+(t "T85d-take-while-empty"
+   (null? (kv:take-while (kv:open) (lambda (k v) #t))))
+
+; T86: drop-while() drops entries while proc is #t; keeps the rest,
+; starting with the first entry for which proc is #f (the boundary).
+(let* ((s (kv:set (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 5) "d" 10))
+       (r (kv:drop-while s (lambda (k v) (< v 5))))
+       (rk (kv:keys r)))
+  (t "T86-drop-while"
+     (and (= (kv:size r) 2)
+          (eq? (kv:get r "a") #f)
+          (eq? (kv:get r "b") #f)
+          (equal? (kv:get r "c") 5)
+          (equal? (kv:get r "d") 10)
+          (equal? (car rk) "c")
+          (equal? (car (cdr rk)) "d"))))
+
+; T86b: drop-while() with an always-true proc returns an empty store.
+(t "T86b-drop-while-all-true"
+   (null? (kv:drop-while (kv:set (kv:set (kv:open) "a" 1) "b" 2)
+                         (lambda (k v) #t))))
+
+; T86c: drop-while() with an always-false proc returns the full store.
+(t "T86c-drop-while-all-false"
+   (let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
+          (r (kv:drop-while s (lambda (k v) #f))))
+     (and (= (kv:size r) 3)
+          (equal? (kv:get r "a") 1)
+          (equal? (kv:get r "c") 3))))
+
+; T86d: drop-while() on an empty store is empty.
+(t "T86d-drop-while-empty"
+   (null? (kv:drop-while (kv:open) (lambda (k v) #t))))
+
+; T87: take-while + drop-while (same proc) partition the source
+; store: their kv:union is structurally equal to the original.
+; Exercises the documented span property — the boundary entry lives
+; on the drop-while side, so a single kv:union gives back the
+; original key multiset and per-key values.
+(let* ((s (kv:set (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 5) "d" 10))
+       (tw (kv:take-while s (lambda (k v) (< v 5))))
+       (dw (kv:drop-while s (lambda (k v) (< v 5))))
+       (joined (kv:union tw dw)))
+  (t "T87-take-drop-while-partition"
+     (kv:equal? s joined)))
+
 (display "SCORE ")
 (display pass)
 (display "/")

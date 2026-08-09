@@ -1,817 +1,437 @@
-<think>The user is asking me to review the project state, set direction, and emit a patch. Let me analyze the current state:
+<think>We have a project that's at 121/121 tests green across Phases 0-14. The SPEC table only lists phases 0-4, but the in-file roadmap has been extended through Phase 14. The success criteria says "Phase ≥ 3 with all T1–T12 green, multi-generation history in `evolve/journal.jsonl`" — we're way past that.
 
-1. The project is at generation 13, baseline SCORE 112/112, full green.
-2. Phases 0-12 are complete according to the roadmap.
-3. The last patch (Phase 13) added: incr, incr-by, decr, decr-by, rename-keys, union-all.
-4. The test suite has 112 tests, all passing.
+Now we need to decide the next direction. Looking at the lib file's roadmap comment:
+- Phase 0..14 all implemented
+- Phase 14: bulk-transformation / merging / counting / value-only filter (update-keys, merge-with, count-value, filter-values)
 
-Looking at the in-file roadmap, the phases 0-13 are all implemented. The SPEC only requires Phase ≥ 3 with all T1–T12 green, multi-generation history in evolve/journal.jsonl. We're way past that.
+We could:
+1. Add a Phase 15 with new ops (e.g., comparison/grouping/conversion helpers)
+2. Refactor / densify existing code
+3. Add tests that stress combinations of existing ops
+4. Optimize / densify (maybe the `kv:_take` recursion, or `kv:reverse` which uses the built-in `reverse`)
 
-Since we're at full score, the controller instructions say:
-"If SCORE is already full, advance SPEC phase (new capability) via code that still keeps old tests green; you may also extend tests/smoke.aura carefully only if you also implement the feature."
+Looking at what's been done so far, the project has been growing by adding new ops each generation. Let me think about what's next in a logical progression for a KV store.
 
-So I should advance to a new phase. The current "Phase 13" was the last one in the lib comment roadmap. Let me think about what to add next.
+Some natural next ops that haven't been added:
+- **Comparison/sorting helpers**: `kv:sort`, `kv:sort-by` — but these would need to expose ordering
+- **Conversion**: `kv:from-alist`, `kv:to-alist` — but entries already does to-alist
+- **Collection predicates**: `kv:all-string-keys?`, `kv:any-string-keys?` — minor
+- **Mapping**: `kv:map-entries` — projects (k . v) to new (k . v); similar to map-values
+- **Functional updates**: `kv:update-values` (currently we have update-keys but not values) — apply proc to each value
+- **Comparison by value**: `kv:group-by` — group entries by some key derived from v
+- **Bulk deletion**: `kv:keep-if` (alias for filter), `kv:remove-if`
+- **Pair operations**: `kv:take-while`, `kv:drop-while`, `kv:span` — for pair/span partitioning
+- **Conversion to other shapes**: `kv:to-list`, `kv:from-list` (we have kv:zip which is from two lists)
+- **Lookup helpers**: `kv:find-key`, `kv:find-value` — look up by key/value predicate
+- **Counting predicate variants**: `kv:count-keys`, `kv:some?`, `kv:none?` (counterparts to any?/every?)
+- **Mutation-like (still functional)**: `kv:assoc`, `kv:dissoc` (clojure-ish aliases)
+- **Set ops over values**: `kv:value-intersection`, etc.
+- **JSON-like helpers**: not really applicable
 
-Some natural extensions to a KV store:
-1. **Iteration / cursor helpers**: a way to step through entries safely
-2. **Persistent storage** (but the SPEC says "meter FS as escape")
-3. **Type-safe accessors**: typed get/set helpers (number vs string)
-4. **Composite helpers**: 
-   - `kv:default` / `kv:default-by` — like get-or but with a thunk
-   - `kv:toggle` — flip a boolean key
-   - `kv:update-keys` — transform keys
-   - `kv:where` — filter with predicate returning store (alias of filter)
-5. **Sorting helpers**: sort-by, sort-keys
-6. **Numeric boundary helpers**: clamp, between?
-7. **Set-style helpers**: xnor (joint presence), difference-list
-8. **Grouping helpers**: group-by
-9. **Path / nested access**: get-path, set-path, del-path (but adds complexity)
+Let me pick **Phase 15: lookup / projection / bulk-update / set-op variants**:
+- `kv:find-key` — `(store proc) -> key | #f`, returns the first key matching proc(k,v)
+- `kv:find-value` — `(store proc) -> value | #f`, returns the first value matching proc(k,v)
+- `kv:update-values` — `(store proc) -> store`, apply proc to each value; alias-like to map-values but uses "update" naming
+- `kv:take-while` — `(store proc) -> store`, keep entries while proc(k,v) is #t, stop at first failure
+- `kv:drop-while` — `(store proc) -> store`, drop entries while proc(k,v) is #t, keep rest
+- `kv:none?` — `(store proc) -> #t | #f`, none satisfy (complement of any?)
+- `kv:has-value?` — `(store val) -> #t | #f`, has any entry with structurally equal value (companion to has? for values)
+- `kv:contains?` — alias for has? (clojure/JS style)
 
-Let me think about what's "natural" and fits the existing pattern of small, pure, composable helpers.
+That's 8 new ops, probably too many. Let me trim to 4-5 high-quality ones:
 
-**Phase 14 ideas** — pure functional bulk/iteration/transformation helpers:
+**Phase 15: lookup / projection / bulk-update / set-op helpers** (4 new ops):
+1. `kv:find-key` — `(store proc) -> key | #f`, returns the first key for which (proc k v) is #t
+2. `kv:find-value` — `(store proc) -> value | #f`, returns the first value for which (proc k v) is #t
+3. `kv:update-values` — `(store proc) -> store`, apply proc to each value (semantically equivalent to map-values but uses "update" naming; actually let's pick a different name to avoid duplication)
+4. `kv:has-value?` — `(store val) -> #t | #f`, true iff at least one entry has a structurally equal value
+5. `kv:none?` — `(store proc) -> #t | #f`, true iff no entries satisfy proc (complement of any?; vacuous #t on empty)
 
-- `kv:update-keys` — `(store proc)` → new store with `(proc k)` applied to each key. Keys can collide — first-wins (consistent with `kv:invert`'s first-occurrence semantics).
-- `kv:toggle` — `(store key)` → flip boolean (treat as 0/1, since Aura doesn't have a native bool). Sets key to 1 on miss, else flips between 0 and 1.
-- `kv:merge-with` — `(store a b proc)` → merge where shared keys go through `proc(a-val, b-val)`. Adds arithmetic combine semantics.
-- `kv:from-list` — `(kv:zip keys vals)` already exists. But a `kv:from-alist` could be useful.
-- `kv:range-keys` — `(store start end)` — get sub-store by key range (lexicographic on string keys, etc.). Maybe overkill.
-- `kv:head-map` / `kv:tail-map` — like map-values but conditional
-- `kv:contains-value?` — `(store val)` — does the store contain value `val`?
-- `kv:contains-values?` — `(store vals)` — does it contain all vals?
+Wait — `kv:update-values` is functionally identical to `kv:map-values`. Let me reconsider.
 
-Let me pick a focused, coherent set of 4-5 helpers that fit the existing patterns:
+Better Phase 15 (5 ops):
+1. `kv:find-key` — first key matching proc
+2. `kv:find-value` — first value matching proc
+3. `kv:has-value?` — any entry has structurally equal value to `val` (companion to has?; uses count-value style)
+4. `kv:none?` — none entries satisfy proc (complement of any?)
+5. `kv:take-while` — keep entries while proc(k,v) is #t
 
-**Phase 14: transformation / containment / composition helpers**
+Or maybe more practical:
+1. `kv:find-key` — `(store proc) -> key | #f`
+2. `kv:find-value` — `(store proc) -> value | #f`
+3. `kv:has-value?` — `(store val) -> #t | #f`
+4. `kv:none?` — `(store proc) -> #t | #f`
+5. `kv:span` — `(store proc) -> (take-while . drop-while)`, returns (matched . rest) like partition but using span semantics
+6. `kv:contains?` — `(store key) -> #t | #f`, alias of has? with name-parse-friendly form
 
-1. `kv:update-keys` — `(store proc)` → new store; `(proc k)` returns new key. First-occurrence wins on collision.
-3. `kv:merge-with` — `(store a b proc)` → merge; shared keys: `proc(a-v, b-v)`.
-4. `kv:contains-value?` — `(store val)` → `#t` if any entry has `val` as its value.
-5. `kv:diff-by` — `(a b proc)` → diff using `proc` as equality comparator (extensibility hook for `kv:diff`).
+Let me go with 6 ops. Actually let me think again about what naturally fits.
 
-Actually let me look more carefully. I want to keep the patch focused and small. Let me pick a tight, clean Phase 14:
+Hmm. Let me look at what's missing:
+- We have `kv:find` (returns (k . v))
+- We have `kv:has?` (key presence)
+- We have `kv:count-value` (count by value)
+- We're missing a value-presence predicate: "does any entry have this value?"
+- We're missing key/value find (vs pair find)
+- We're missing take-while/drop-while
+- We're missing none?/some?
 
-**Phase 14: bulk-transformation helpers**
+OK, I'll go with Phase 15: **lookup, value-presence, span helpers** (6 ops):
+1. `kv:find-key` — first key for which proc(k,v) is #t
+2. `kv:find-value` — first value for which proc(k,v) is #t
+3. `kv:has-value?` — any entry with structurally equal value to val
+4. `kv:none?` — complement of any?
+5. `kv:take-while` — keep entries while proc(k,v) is #t
+6. `kv:drop-while` — drop entries while proc(k,v) is #t, keep rest
 
-1. `kv:update-keys` — `(store proc)` → new store with `(proc k)` as new keys
-2. `kv:contains-value?` — `(store val)` → `#t` / `#f`
-3. `kv:merge-with` — `(a b proc)` → merge with combiner for shared keys
-4. `kv:rename-all` — bulk rename using a function
+That's 6 new ops. Each needs 1-2 tests. Probably 8-12 new tests.
 
-Actually, let me think about what's missing and would be genuinely useful:
+Let me plan more carefully:
 
-- `kv:contains-value?` is very natural — complement to `kv:has?`
-- `kv:update-keys` is natural — complement to `kv:map-values`
-- `kv:merge-with` is natural — generalization of `kv:merge`
+Tests:
+- T81: find-key returns first matching key, #f on miss/empty
+- T81b: find-key on empty store
+- T82: find-value returns first matching value
+- T82b: find-value on empty store
+- T83: has-value? checks value presence structurally
+- T83b: has-value? on empty store
+- T84: none? is complement of any?, vacuous #t on empty
+- T85: take-while preserves order, stops at first failure
+- T85b: take-while on all-true yields full store
+- T85c: take-while on all-false yields empty
+- T86: drop-while drops prefix while proc is #t
+- T86b: drop-while on all-true yields empty
+- T86c: drop-while on all-false yields full store
 
-That's a clean Phase 14 trio. Let me also add:
-- `kv:zipmap` (alias of zip?) — maybe redundant
-- `kv:from-alist` — `(kv:zip keys vals)` already covers this
+That's 13 new tests, target 134/134.
 
-Let me go with:
-1. `kv:update-keys`
-2. `kv:contains-value?`
-3. `kv:merge-with`
-4. `kv:count-values` — count occurrences of a value (uses kv:frequencies internally? Or just a count for one value)
+Now let me write the code carefully.
 
-Actually, `kv:contains-value?` is just `kv:any?` with `(lambda (k v) (equal? v val))`. So it's redundant. Let me drop that.
+```scheme
+; (kv:find-key store proc) -> key | #f
+; Returns the first key for which (proc k v) is #t, or #f when no
+; entry matches or the store is empty. Skips non-pair cells defensively.
+(define (kv:find-key store proc)
+  (if (null? store)
+    #f
+    (let ((p (car store)))
+      (if (and (pair? p) (proc (car p) (cdr p)))
+        (car p)
+        (kv:find-key (cdr store) proc)))))
 
-Final Phase 14:
-1. `kv:update-keys` — `(store proc)` → new store with `(proc k)` as new keys
-2. `kv:merge-with` — `(a b proc)` → merge with combiner for shared keys
-3. `kv:head` — `(store)` → just the first pair's value (`#f` on empty)? Or take a different name...
-4. `kv:tail` — last pair's value? 
+; (kv:find-value store proc) -> value | #f
+; Returns the first value for which (proc k v) is #t, or #f when no
+; entry matches or the store is empty. Skips non-pair cells defensively.
+; Note: a value of literally #f cannot be distinguished from a miss
+; — same limitation as kv:get.
+(define (kv:find-value store proc)
+  (if (null? store)
+    #f
+    (let ((p (car store)))
+      (if (and (pair? p) (proc (car p) (cdr p)))
+        (cdr p)
+        (kv:find-value (cdr store) proc)))))
 
-Hmm, those aren't quite right. Let me reconsider.
+; (kv:has-value? store val) -> #t | #f
+; True iff at least one entry's value is structurally equal to val.
+; Thin wrapper over kv:any?; provided for symmetry with kv:has?
+; (key presence) — together they cover "presence on either axis"
+; without forcing the caller to write (lambda (k v) (equal? v val)).
+; A stored #f value matches an argument of #f.
+(define (kv:has-value? store val)
+  (kv:any? store (lambda (k v) (equal? v val))))
 
-Actually I think I'll keep this simple and focused. Let me add these for Phase 14:
+; (kv:none? store proc) -> #t | #f
+; True iff no entry satisfies (proc k v). Short-circuits on the
+; first hit. Vacuous #t on an empty store (no entry can satisfy
+; anything). Equivalent to (not (kv:any? store proc)) but provided
+; as a named predicate for symmetry with kv:any? / kv:every?.
+(define (kv:none? store proc)
+  (if (null? store)
+    #t
+    (let ((p (car store)))
+      (if (and (pair? p) (proc (car p) (cdr p)))
+        #f
+        (kv:none? (cdr store) proc)))))
 
-1. `kv:update-keys` — `(store proc)` → new store; keys go through `(proc k)`. First-occurrence wins on collisions.
-2. `kv:merge-with` — `(a b proc)` → merge; shared keys: `(proc a-v b-v)`. Right-only keys appended at end.
-3. `kv:contains-value?` — wait, this is just `kv:any?` so I'll skip it.
-4. `kv:count-value` — `(store val)` → number of entries with value `val` (uses `kv:count` internally). Useful shorthand.
-5. `kv:filter-values` — `(store proc)` → sub-store where `(proc v)` is `#t`. Complements `kv:filter` which takes `(proc k v)`.
+; (kv:take-while store proc) -> store.
+; Keep entries (in insertion order) until the first entry for which
+; (proc k v) is #f. Stops at that entry — it is NOT included. Empty
+; input → empty output; an all-true proc yields the whole store.
+; Non-pair cells are skipped defensively via _fold... wait, take-while
+; needs to be careful: it should stop at first false. Let me rewrite.
+(define (kv:take-while store proc)
+  (let loop ((xs store) (acc (quote ())))
+    (if (null? xs)
+      (reverse acc)
+      (let ((p (car xs)))
+        (if (pair? p)
+          (if (proc (car p) (cdr p))
+            (loop (cdr xs) (cons p acc))
+            (reverse acc))
+          (loop (cdr xs) acc))))))
 
-That's a clean 4-op Phase 14:
-- `kv:update-keys` — bulk key transformation
-- `kv:merge-with` — merge with combiner
-- `kv:count-value` — value-presence count
-- `kv:filter-values` — value-only filter
-
-Let me write the code.
-
-For `kv:update-keys`:
-```aura
-; (kv:update-keys store proc) -> store
-; Apply (proc k) to each key. Collisions resolve to the first occurrence
-; (consistent with kv:invert's first-occurrence semantics). Keys are
-; passed through the existing string?-key guard implicitly because
-; kv:_set already validates.
-; Actually no, kv:_set doesn't validate; kv:set does. We need to use
-; kv:set to get the string validation, but kv:set wraps in kv:_set only
-; if key is string? — else returns store unchanged. That means a proc
-; that produces a non-string key would silently drop that entry. 
-; Hmm. Let me think...
+; (kv:drop-while store proc) -> store.
+; Drop entries (in insertion order) while (proc k v) is #t. Stops at
+; the first entry for which proc is #f (or the end of the store) and
+; returns the rest, preserving its original order. Empty input →
+; empty output; an all-true proc yields an empty output. Non-pair cells
+; in the dropped prefix are skipped defensively (never counted as the
+; stop signal); once the prefix is dropped, the tail is returned as-is
+; (preserving any stray cells).
+(define (kv:drop-while store proc)
+  (let loop ((xs store))
+    (if (null? xs)
+      (quote ())
+      (let ((p (car xs)))
+        (if (pair? p)
+          (if (proc (car p) (cdr p))
+            (loop (cdr xs))
+            xs)
+          (loop (cdr xs)))))))
 ```
 
-Actually, the simplest correct approach: build new entries, validate at end. But that's complex. Let me just do the straightforward version using kv:_set directly (no string validation since update-keys may legitimately produce any key, just like invert). I'll note that in the comment.
+Wait, drop-while needs to handle the case where the first cell is non-pair — we should keep skipping until we find a pair cell or hit the end, but if we find a pair cell that is false we stop. That's what the code does: it walks through skipping non-pair cells; once it sees a pair, it checks proc; if proc is true, keep dropping; if proc is false, return the rest including this cell.
 
-```aura
-(define (kv:update-keys store proc)
-  (kv:_fold store (quote ())
-    (lambda (k v acc)
-      (let ((new-k (proc k)))
-        (if (kv:_has acc new-k)
-          acc
-          (kv:_set acc new-k v))))))
+Actually that's correct behavior — non-pair cells in the prefix are dropped along with the rest. They don't count toward the "stop" decision because they're not real entries.
+
+Now the tests. Let me write them:
+
+```scheme
+; ---- Phase 15: lookup / value-presence / span helpers ----
+
+; T81: find-key() returns the first key for which proc(k,v) is #t;
+; #f on miss / empty.
+(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 5) "c" 10)))
+  (t "T81-find-key"
+     (and (equal? (kv:find-key s (lambda (k v) (> v 3))) "b")
+          (eq? (kv:find-key s (lambda (k v) (> v 100)) #f))
+          (eq? (kv:find-key (kv:open) (lambda (k v) #t)) #f))))
 ```
 
-Wait, but this skips non-pair cells. And uses kv:_set which doesn't validate strings. Same posture as invert. Good.
+Wait, the second one has a bug — `(eq? (kv:find-key s ...) #f)` should be `(eq? (kv:find-key s (lambda (k v) (> v 100))) #f)`. Let me fix:
 
-For `kv:merge-with`:
-```aura
-(define (kv:merge-with a b proc)
-  ; First, build merged store where shared keys get proc(a-v, b-v)
-  ; and b-only keys are appended at the end.
-  (let* ((merged
-           (kv:_fold a (quote ())
-             (lambda (k va acc)
-               (if (kv:_has b k)
-                 (kv:_set acc k (proc va (kv:_ref b k)))
-                 (kv:_set acc k va)))))
-         (b-only
-           (kv:_fold b (quote ())
-             (lambda (k v acc)
-               (if (kv:_has a k)
-                 acc
-                 (kv:_set acc k v))))))
-    ; Now append b-only in b's order
-    ; Wait, this won't preserve order properly because we built acc in a's order
-    ; then added b-only at the end. But we want b-only to be appended
-    ; to merged (which already has a's order). That works!
-    ; Actually wait, "appended" in our model means kv:_set on missing key,
-    ; which appends. So merging merged + b-only gives us a's order for
-    ; shared keys, then b-only in b's order. That's exactly what we want.
-    (kv:_fold b-only merged
-      (lambda (k v acc) (kv:_set acc k v)))))
+```scheme
+(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 5) "c" 10)))
+  (t "T81-find-key"
+     (and (equal? (kv:find-key s (lambda (k v) (> v 3))) "b")
+          (eq? (kv:find-key s (lambda (k v) (> v 100))) #f)
+          (eq? (kv:find-key (kv:open) (lambda (k v) #t)) #f))))
 ```
 
-Hmm, simpler:
-```aura
-(define (kv:merge-with a b proc)
-  (kv:_fold b (kv:_fold a (quote ())
-              (lambda (k va acc)
-                (if (kv:_has b k)
-                  (kv:_set acc k (proc va (kv:_ref b k)))
-                  (kv:_set acc k va))))
-    (lambda (k vb acc)
-      (if (kv:_has a k)
-        acc
-        (kv:_set acc k vb)))))
+```scheme
+; T82: find-value() returns the first value for which proc(k,v) is #t.
+(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 5) "c" 10)))
+  (t "T82-find-value"
+     (and (equal? (kv:find-value s (lambda (k v) (> v 3))) 5)
+          (eq? (kv:find-value s (lambda (k v) (> v 100))) #f)
+          (eq? (kv:find-value (kv:open) (lambda (k v) #t)) #f))))
 ```
 
-Wait that's also fine. Let me think more carefully. We want:
-- shared keys: `proc(a-v, b-v)`, in a's position
-- a-only: a's value, in a's position
-- b-only: b's value, appended at end in b's order
-
-Build base from `a`:
-- For each (k, va) in a:
-  - if k in b: set k -> proc(va, b[k])
-  - else: set k -> va
-
-Then fold over `b` adding b-only at end:
-- For each (k, vb) in b:
-  - if k in a: skip (already handled)
-  - else: set k -> vb (which appends)
-
-```aura
-(define (kv:merge-with a b proc)
-  (let ((base
-          (kv:_fold a (quote ())
-            (lambda (k va acc)
-              (if (kv:_has b k)
-                (kv:_set acc k (proc va (kv:_ref b k)))
-                (kv:_set acc k va))))))
-    (kv:_fold b base
-      (lambda (k vb acc)
-        (if (kv:_has a k)
-          acc
-          (kv:_set acc k vb))))))
+```scheme
+; T83: has-value? checks for value presence structurally.
+(let* ((s (kv:set (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 1) "d" 3)))
+  (t "T83-has-value?"
+     (and (kv:has-value? s 1)
+          (kv:has-value? s 2)
+          (kv:has-value? s 3)
+          (not (kv:has-value? s 99))
+          (not (kv:has-value? (kv:open) 1)))))
 ```
 
-That's clean.
-
-For `kv:count-value`:
-```aura
-(define (kv:count-value store val)
-  (kv:count store (lambda (k v) (equal? v val))))
+```scheme
+; T84: none? is the complement of any?; vacuous #t on empty.
+(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 5) "c" 10)))
+  (t "T84-none?"
+     (and (kv:none? s (lambda (k v) (> v 100)))
+          (not (kv:none? s (lambda (k v) (> v 3))))
+          (kv:none? (kv:open) (lambda (k v) #t)))))
 ```
 
-For `kv:filter-values`:
-```aura
-(define (kv:filter-values store proc)
-  (kv:_fold store (quote ())
-    (lambda (k v acc)
-      (if (proc v) (kv:_set acc k v) acc))))
-```
-
-Now I need tests too. Let me add T77-T80.
-
-T77: `kv:update-keys` transforms keys
-```aura
-(let* ((s (kv:set (kv:set (kv:open) "a" 1) "b" 2))
-       (r (kv:update-keys s (lambda (k) (string-append k "!")))))
-  (t "T77-update-keys"
+```scheme
+; T85: take-while() keeps entries while proc is #t; stops at first miss.
+(let* ((s (kv:set (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 5) "d" 10))
+       (r (kv:take-while s (lambda (k v) (< v 5))))
+       (rk (kv:keys r)))
+  (t "T85-take-while"
      (and (= (kv:size r) 2)
-          (eq? (kv:has? r "a") #f)
-          (eq? (kv:has? r "b") #f)
-          (equal? (kv:get r "a!") 1)
-          (equal? (kv:get r "b!") 2))))
-```
-
-T77b: `kv:update-keys` first-occurrence wins on collision
-```aura
-(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
-       (r (kv:update-keys s (lambda (k) "x"))))
-  (t "T77b-update-keys-collision"
-     (and (= (kv:size r) 1)
-          (equal? (kv:get r "x") 1))))
-```
-
-T78: `kv:merge-with` uses combiner on shared keys
-```aura
-(let* ((a (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
-       (b (kv:set (kv:set (kv:set (kv:open) "b" 20) "c" 30) "d" 4))
-       (r (kv:merge-with a b (lambda (x y) (+ x y)))))
-  (t "T78-merge-with"
-     (and (= (kv:size r) 4)
           (equal? (kv:get r "a") 1)
-          (equal? (kv:get r "b") 22)
-          (equal? (kv:get r "c") 33)
-          (equal? (kv:get r "d") 4))))
-```
-
-T78b: `kv:merge-with` preserves order (a-then-b-only)
-```aura
-(let* ((a (kv:set (kv:set (kv:open) "a" 1) "b" 2))
-       (b (kv:set (kv:set (kv:open) "c" 3) "d" 4))
-       (r (kv:merge-with a b (lambda (x y) (+ x y))))
-       (rk (kv:keys r)))
-  (t "T78b-merge-with-order"
-     (and (equal? (car rk) "a")
-          (equal? (car (cdr rk)) "b")
-          (equal? (car (cdr (cdr rk))) "c")
-          (equal? (car (cdr (cdr (cdr rk)))) "d"))))
-```
-
-T79: `kv:count-value` counts occurrences of a value
-```aura
-(let* ((s (kv:set (kv:set (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 1) "d" 3) "e" 1)))
-  (t "T79-count-value"
-     (and (= (kv:count-value s 1) 3)
-          (= (kv:count-value s 2) 1)
-          (= (kv:count-value s 99) 0)
-          (= (kv:count-value (kv:open) 1) 0))))
-```
-
-T80: `kv:filter-values` keeps entries whose value passes the predicate
-```aura
-(let* ((s (kv:set (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3) "d" 4))
-       (r (kv:filter-values s (lambda (v) (> v 2)))))
-  (t "T80-filter-values"
-     (and (= (kv:size r) 2)
-          (equal? (kv:get r "c") 3)
-          (equal? (kv:get r "d") 4)
-          (eq? (kv:get r "a") #f)
-          (eq? (kv:get r "b") #f))))
-```
-
-Let me also bump `kv:version` to 14 and update the in-file comment roadmap.
-
-Now let me write the full patch.
-
-Actually wait — I need to check whether Aura has `string-append`. Let me search the existing code... I don't see it used. But it's likely a standard Aura builtin. If not, I can use a different example. Let me use something safer like prefixing with "k:" using cons or string concatenation that might already be there.
-
-Hmm, looking at the existing code, I see `kv:zip` uses lists of strings directly. Let me check if `string-append` is mentioned anywhere... No. To be safe, let me use a function that doesn't need string manipulation. I'll use `(lambda (k) (cons 'k k))` or similar to generate unique keys.
-
-Actually let me just use a simpler lambda that maps keys to symbols or to a fixed value. Like:
-```aura
-(kv:update-keys s (lambda (k) (cons 'k k)))
-```
-
-Then test:
-```aura
-(kv:has? r (cons 'k "a"))
-```
-
-Hmm, that gets messy. Let me try with a simpler example. I'll use a function that prepends a fixed prefix character:
-
-Actually, the cleanest approach: use kv:update-keys to map keys to indices (using their position). But we don't have positions. 
-
-Let me just use the `string-append` and trust that it's available. If not, I can adjust.
-
-Actually, looking at typical Scheme/R7RS-small docs, `string-append` is a standard builtin. Aura is based on R5RS/R7RS, so it should have it.
-
-Let me finalize the patch now.
-
-I need to:
-1. Update the in-file roadmap comment (add Phase 14)
-2. Add Phase 14 ops to export list
-3. Add Phase 14 implementations
-4. Add Phase 14 tests
-5. Bump `kv:version` to 14
-
-Let me write it all out.
-
-Wait — let me reconsider what to add. Let me think about the journal "direction" field the actuator will read. Let me write a clear direction.
-
-OK, I'm going with:
-- Phase 14: bulk-transformation / merging / counting / value-only filter helpers
-
-Ops (4):
-1. `kv:update-keys` — `(store proc)` → store; keys transformed by `proc`
-2. `kv:merge-with` — `(a b proc)` → merge; shared keys combined via `proc(a-v, b-v)`
-3. `kv:count-value` — `(store val)` → count of entries whose value equals `val`
-4. `kv:filter-values` — `(store proc)` → sub-store of entries with `(proc v) = #t`
-
-Tests T77-T80 (and maybe T77b, T78b, T80b variants).
-
-Let me write out the full patches now.
-
-Actually, one more consideration: the patch should be a "multi-file patch (usually lib/kv.aura, sometimes tests only if SPEC-aligned)". Since we're adding new functionality, I'll patch lib/kv.aura + tests/smoke.aura. Both.
-
-But the output format says "FILE relative/path" for the patch. So I can include multiple files. Let me do that.
-
-Let me now write the complete lib/kv.aura patch and the tests/smoke.aura patch.
-
-Actually wait — re-reading the controller instructions:
-"PATCH
-FILE relative/path
-```
-full file contents
-```"
-
-So the format is one file block per file. I should output two file blocks.
-
-Let me start writing.
-
-First, lib/kv.aura. The structure I'll add is:
-
-1. Update header comment roadmap (add Phase 14 line)
-2. Add to exports list: `kv:update-keys`, `kv:merge-with`, `kv:count-value`, `kv:filter-values`
-3. Bump `kv:version` to `14`
-4. Add Phase 14 implementation block at the end
-
-For the test file, add new tests after T76.
-
-Let me write out the full lib/kv.aura. It's about 600 lines currently. I'll do the full file replacement since the SPEC says "Prefer full-file replacement for small projects".
-
-Actually wait — let me re-read the file. I see the full file is given in the controller input. Let me write the modified version.
-
-Here's the plan:
-- Change `(define kv:version 13)` to `(define kv:version 14)`
-- Add 4 names to the export list
-- Add a Phase 14 section at the bottom with 4 ops
-
-Let me write it.
-
-For the Phase 14 section:
-
-```
-; ---------------------------------------------------------------------------
-; Phase 14 bulk-transformation / merging / counting / value-only filter.
-; Pure functional; insertion order preserved by construction; no FS
-; escapes; no API renames; no exports removed. All derive from existing
-; alist primitives (`_fold`, `_set`, `_has`, `_ref`) and from the
-; Phase 6 public ops (`kv:count`) — no new internal helpers required.
-;
-; Conventions:
-;   * `kv:update-keys` folds the source store left-to-right and writes
-;     `(proc k) -> v` into a fresh accumulator. On a collision (two
-;     source keys mapping to the same new key) the FIRST occurrence
-;     wins and later duplicates are dropped — consistent with
-;     `kv:invert`'s first-occurrence semantics and with the "earlier
-;     source position wins" insertion-order rule used by every op in
-;     the store. Uses `kv:_set` directly (no string?-key guard) because
-;     the new keys are caller-supplied projections, not fresh kv:set
-;     writes — same posture as `kv:invert`.
-;   * `kv:merge-with` generalises `kv:merge` by letting the caller pick
-;     how shared-key values combine. `a's` insertion order is preserved
-;     for shared keys (with `(proc a-v b-v)` as the new value); `b`-only
-;     keys are appended at the end in `b`'s iteration order. Built as
-;     a fold over `a` to compute the shared-key set, then a fold over
-;     `b` to append b-only keys — no intermediate alist materialised.
-;     `proc` is called only for keys present in BOTH operands; for
-;     disjoint operands the result is identical to `kv:union`.
-;   * `kv:count-value` is a thin wrapper over `kv:count`: counts
-;     entries whose value is structurally equal to `val`. Provided for
-;     symmetry with `kv:has?` (key-presence) — together they cover
-;     "presence on either axis" without exposing the (k . v) pair
-;     shape to the caller.
-;   * `kv:filter-values` is the value-only projection of `kv:filter`:
-;     keeps entries for which `(proc v)` is `#t`, drops the rest.
-;     Complements `kv:filter (proc k v)` by removing the key argument
-;     when the caller only cares about the value side. Preserves the
-;     survivor's original insertion order (single fold over the source
-;     in insertion order; `kv:_set` appends).
-; ---------------------------------------------------------------------------
-
-; (kv:update-keys store proc) -> store.
-; Apply `(proc k)` to each key. Folds `store` left-to-right in insertion
-; order; for each (k, v), computes (new-k = (proc k)) and (if new-k is
-; not already in the accumulator) writes (new-k -> v) into acc. On a
-; collision (two source keys mapping to the same new-k) the FIRST
-; occurrence wins and later duplicates are dropped — consistent with
-; `kv:invert`'s first-occurrence semantics. Insertion order of the
-; result tracks the source's order. Uses `kv:_set` directly (no
-; string?-key guard) because the new keys are caller-supplied
-; projections, not fresh `kv:set` writes — same posture as `kv:invert`.
-; Non-pair cells in `store` are skipped defensively (via `_fold`).
-(define (kv:update-keys store proc)
-  (kv:_fold store (quote ())
-    (lambda (k v acc)
-      (let ((new-k (proc k)))
-        (if (kv:_has acc new-k)
-          acc
-          (kv:_set acc new-k v))))))
-
-; (kv:merge-with a b proc) -> store.
-; Right-biased merge with caller-supplied combiner. For each key
-; shared between `a` and `b`, writes (proc a-v b-v) as the new value
-; (replacing both operands' values). For each `a`-only key, writes
-; `a`'s value as-is. For each `b`-only key, writes `b`'s value at the
-; end in `b`'s iteration order. Built as a fold over `a` to compute
-; the shared-key set (with combiner applied), then a fold over `b`
-; that appends the b-only keys — `kv:_set`'s "append on miss"
-; behaviour does the rest. The insertion order of `a` is preserved
-; for shared keys; b-only keys are appended at the end in b's order.
-; For disjoint operands, no key is shared, so `proc` is never called
-; and the result is identical to `kv:union`.
-(define (kv:merge-with a b proc)
-  (let ((base
-          (kv:_fold a (quote ())
-            (lambda (k va acc)
-              (if (kv:_has b k)
-                (kv:_set acc k (proc va (kv:_ref b k)))
-                (kv:_set acc k va))))))
-    (kv:_fold b base
-      (lambda (k vb acc)
-        (if (kv:_has a k)
-          acc
-          (kv:_set acc k vb))))))
-
-; (kv:count-value store val) -> integer.
-; Number of entries whose value is structurally equal to `val`. Thin
-; wrapper over `kv:count` — provided for symmetry with `kv:has?`
-; (key-presence). Returns 0 on an empty store. A stored `#f` value
-; matches `#f` (equal? agrees on `#f`); a missing entry never matches
-; anything.
-(define (kv:count-value store val)
-  (kv:count store (lambda (k v) (equal? v val))))
-
-; (kv:filter-values store proc) -> store.
-; Sub-store of entries for which `(proc v)` is `#t`. Folds `store`
-; left-to-right in insertion order; keeps an entry (writing k -> v
-; into the accumulator, which appends in source order) iff `(proc v)`
-; is `#t`. Complements `kv:filter (proc k v)` by removing the key
-; argument when the caller only cares about the value side. Insertion
-; order of survivors follows the source. Non-pair cells in `store`
-; are skipped defensively (via `_fold`).
-(define (kv:filter-values store proc)
-  (kv:_fold store (quote ())
-    (lambda (k v acc)
-      (if (proc v)
-        (kv:_set acc k v)
-        acc))))
-```
-
-Now for tests, I'll add:
-
-```
-; ---- Phase 14: bulk-transformation / merging / counting / value-only filter ----
-
-; T77: update-keys() transforms keys via caller-supplied proc.
-(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
-       (r (kv:update-keys s (lambda (k) (string-append k "!"))))
-       (rk (kv:keys r)))
-  (t "T77-update-keys"
-     (and (= (kv:size r) 3)
-          (eq? (kv:has? r "a") #f)
-          (eq? (kv:has? r "b") #f)
-          (eq? (kv:has? r "c") #f)
-          (equal? (kv:get r "a!") 1)
-          (equal? (kv:get r "b!") 2)
-          (equal? (kv:get r "c!") 3)
-          (equal? (car rk) "a!")
-          (equal? (car (cdr rk)) "b!")
-          (equal? (car (cdr (cdr rk))) "c!"))))
-
-; T77b: update-keys() on a collision: first-occurrence wins.
-(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
-       (r (kv:update-keys s (lambda (k) "x"))))
-  (t "T77b-update-keys-collision"
-     (and (= (kv:size r) 1)
-          (equal? (kv:get r "x") 1))))
-
-; T77c: update-keys() on an empty store is empty.
-(t "T77c-update-keys-empty"
-   (= (kv:size (kv:update-keys (kv:open) (lambda (k) k))) 0))
-
-; T78: merge-with() combines shared keys via caller-supplied proc.
-(let* ((a (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
-       (b (kv:set (kv:set (kv:set (kv:open) "b" 20) "c" 30) "d" 4))
-       (r (kv:merge-with a b (lambda (x y) (+ x y))))
-       (rk (kv:keys r)))
-  (t "T78-merge-with"
-     (and (= (kv:size r) 4)
-          (equal? (kv:get r "a") 1)
-          (equal? (kv:get r "b") 22)
-          (equal? (kv:get r "c") 33)
-          (equal? (kv:get r "d") 4)
+          (equal? (kv:get r "b") 2)
+          (eq? (kv:get r "c") #f)
+          (eq? (kv:get r "d") #f)
           (equal? (car rk) "a")
-          (equal? (car (cdr rk)) "b")
-          (equal? (car (cdr (cdr rk))) "c")
-          (equal? (car (cdr (cdr (cdr rk)))) "d"))))
+          (equal? (car (cdr rk)) "b"))))
 
-; T78b: merge-with() with disjoint operands equals union; combiner not called.
-(let* ((calls 0)
-       (a (kv:set (kv:set (kv:open) "a" 1) "b" 2))
-       (b (kv:set (kv:set (kv:open) "c" 3) "d" 4))
-       (r (kv:merge-with a b
-              (lambda (x y) (set! calls (+ calls 1)) (+ x y)))))
-  (t "T78b-merge-with-disjoint"
-     (and (= calls 0)
-          (= (kv:size r) 4)
+; T85b: take-while() with an always-true proc returns the full store.
+(t "T85b-take-while-all-true"
+   (let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
+          (r (kv:take-while s (lambda (k v) #t))))
+     (and (= (kv:size r) 3)
           (equal? (kv:get r "a") 1)
-          (equal? (kv:get r "d") 4))))
+          (equal? (kv:get r "c") 3))))
 
-; T78c: merge-with() with an empty operand is identity on the other side.
-(t "T78c-merge-with-empty"
-   (let* ((a (kv:set (kv:set (kv:open) "a" 1) "b" 2)))
-     (and (kv:equal? (kv:merge-with a (kv:open) (lambda (x y) (+ x y))) a)
-          (kv:equal? (kv:merge-with (kv:open) a (lambda (x y) (+ x y))) a))))
+; T85c: take-while() with an always-false proc returns empty.
+(t "T85c-take-while-all-false"
+   (null? (kv:take-while (kv:set (kv:set (kv:open) "a" 1) "b" 2)
+                         (lambda (k v) #f))))
 
-; T79: count-value() counts entries with structurally equal value.
-(let* ((s (kv:set (kv:set (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 1) "d" 3) "e" 1)))
-  (t "T79-count-value"
-     (and (= (kv:count-value s 1) 3)
-          (= (kv:count-value s 2) 1)
-          (= (kv:count-value s 3) 1)
-          (= (kv:count-value s 99) 0)
-          (= (kv:count-value (kv:open) 1) 0))))
+; T85d: take-while() on an empty store is empty.
+(t "T85d-take-while-empty"
+   (null? (kv:take-while (kv:open) (lambda (k v) #t))))
+```
 
-; T80: filter-values() keeps entries whose value passes the predicate.
-(let* ((s (kv:set (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3) "d" 4))
-       (r (kv:filter-values s (lambda (v) (> v 2))))
+```scheme
+; T86: drop-while() drops entries while proc is #t; keeps the rest.
+(let* ((s (kv:set (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 5) "d" 10))
+       (r (kv:drop-while s (lambda (k v) (< v 5))))
        (rk (kv:keys r)))
-  (t "T80-filter-values"
+  (t "T86-drop-while"
      (and (= (kv:size r) 2)
-          (equal? (kv:get r "c") 3)
-          (equal? (kv:get r "d") 4)
           (eq? (kv:get r "a") #f)
           (eq? (kv:get r "b") #f)
+          (equal? (kv:get r "c") 5)
+          (equal? (kv:get r "d") 10)
           (equal? (car rk) "c")
           (equal? (car (cdr rk)) "d"))))
 
-; T80b: filter-values() on an empty store is empty.
-(t "T80b-filter-values-empty"
-   (= (kv:size (kv:filter-values (kv:open) (lambda (v) #t))) 0))
-```
+; T86b: drop-while() with an always-true proc returns empty.
+(t "T86b-drop-while-all-true"
+   (null? (kv:drop-while (kv:set (kv:set (kv:open) "a" 1) "b" 2)
+                         (lambda (k v) #t))))
 
-Now I need to write out the full lib/kv.aura. Since it's quite long, let me be careful. The diff is:
-1. Update comment header (add Phase 14 line)
-2. Add 4 names to export list (after kv:union-all)
-3. Bump version 13 → 14
-4. Add Phase 14 implementation block at the end
-
-Let me write the full file.
-
-I'll prepare the full file contents now.
-
-Actually, given the file is already very long, and the SPEC says "Prefer full-file replacement for small projects", and this is a small project — but the file is already ~700 lines. Let me think if there's a better way to do partial patches.
-
-The output format says "FILE relative/path" then "```full file contents```". So I'll provide the full file.
-
-Let me write it out carefully.
-
-Actually, I'm going to be more careful. The full file is about 660+ lines based on the input. Let me carefully reproduce it with my modifications.
-
-Let me go through and modify:
-
-Line 1-13: Comment header. Add Phase 14 line.
-Line 16-69: Export list. Add 4 new exports after `kv:union-all`.
-Line 71: `kv:version` 13 → 14.
-Lines 73-end: Internal helpers, then phases. Add Phase 14 at end.
-
-Let me write the patch.
-
-Wait, I realize the patch directive says "full file contents". Let me be very careful to reproduce the entire file accurately. Looking at the input, I have the full file. Let me just make targeted changes and write the full result.
-
-Let me identify the exact changes:
-
-1. Comment header (top of file): add Phase 14 line after Phase 13
-2. Export list: add `kv:update-keys`, `kv:merge-with`, `kv:count-value`, `kv:filter-values` after `kv:union-all`
-3. `(define kv:version 13)` → `(define kv:version 14)`
-4. Add Phase 14 section at the end (before the EOF)
-
-For test file:
-1. Add Phase 14 tests after T76
-
-Let me write these out.
-
-For the export list, the current order is:
-```
-(export kv:version
-        kv:open
-        kv:set
-        kv:get
-        kv:del
-        kv:has?
-        kv:keys
-        kv:size
-        kv:clear
-        kv:mset
-        kv:mget
-        kv:update
-        kv:merge
-        kv:copy
-        ...
-        kv:union-all)
-```
-
-I need to add the 4 new ones. Let me put them after `kv:union-all` in the export list.
-
-OK let me write the full patches now. I'll do this carefully.
-
-Actually, on reflection — let me think about whether I should be so ambitious. The test count is already 112. Adding 8 more tests would bring it to 120. That's good.
-
-Let me also reconsider whether string-append is supported. Looking at the existing code... I don't see any string operations. But it's a standard Scheme/R7RS builtin so it should be fine. If it's not, the test would fail and the patch would be rejected. Let me trust it.
-
-Actually, let me think about a simpler test for update-keys that doesn't depend on string-append. I could use a function that returns a fixed string for any key:
-
-```aura
-(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
-       (r (kv:update-keys s (lambda (k) "k")))
-       (rk (kv:keys r)))
-  (t "T77-update-keys"
-     (and (= (kv:size r) 1)
-          (eq? (kv:has? r "a") #f)
-          (eq? (kv:has? r "b") #f)
-          (eq? (kv:has? r "c") #f)
-          (equal? (kv:get r "k") 1))))
-```
-
-Hmm, but this only tests the collision case (all keys → "k"). Not very interesting.
-
-Better: test with prefix that doesn't cause collisions:
-
-Actually, let me use a function that prefixes keys with a marker character. But I need string concatenation.
-
-Alternative: I can build the new key with cons/list operations, but then has? wouldn't work the same.
-
-Let me try: use `string-append`. It's a standard Scheme builtin. Aura should support it.
-
-Or even simpler: I can use kv:update-keys with a function that returns a literal that's a fixed key for a particular input. Like:
-
-```aura
-(let* ((s (kv:set (kv:set (kv:open) "a" 1) "b" 2))
-       (r (kv:update-keys s (lambda (k) (if (equal? k "a") "x" "y")))))
-  (t "T77-update-keys"
-     (and (= (kv:size r) 2)
-          (eq? (kv:has? r "a") #f)
-          (eq? (kv:has? r "b") #f)
-          (equal? (kv:get r "x") 1)
-          (equal? (kv:get r "y") 2))))
-```
-
-This works without string-append. Let me use this.
-
-OK, let me finalize the patch.
-
-For T77 update-keys, I'll use the if-equal lambda approach to avoid relying on string-append.
-
-Now let me also reconsider: my `kv:update-keys` only handles non-collision case. The collision case is the first-wins behavior, which I have a test for (T77b).
-
-But wait, T77 doesn't test "first-occurrence order preserved" because each input maps to a different output key. Let me add a check:
-
-```aura
-(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
-       (r (kv:update-keys s (lambda (k) (if (equal? k "a") "x"
-                                       (if (equal? k "b") "y" "z")))))
-       (rk (kv:keys r)))
-  (t "T77-update-keys"
+; T86c: drop-while() with an always-false proc returns the full store.
+(t "T86c-drop-while-all-false"
+   (let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
+          (r (kv:drop-while s (lambda (k v) #f))))
      (and (= (kv:size r) 3)
-          (eq? (kv:has? r "a") #f)
-          (eq? (kv:has? r "b") #f)
-          (eq? (kv:has? r "c") #f)
-          (equal? (kv:get r "x") 1)
-          (equal? (kv:get r "y") 2)
-          (equal? (kv:get r "z") 3)
-          (equal? (car rk) "x")
-          (equal? (car (cdr rk)) "y")
-          (equal? (car (cdr (cdr rk))) "z"))))
+          (equal? (kv:get r "a") 1)
+          (equal? (kv:get r "c") 3))))
+
+; T86d: drop-while() on an empty store is empty.
+(t "T86d-drop-while-empty"
+   (null? (kv:drop-while (kv:open) (lambda (k v) #t))))
 ```
 
-That tests both "keys transformed" and "insertion order preserved".
+That's 14 new tests. Let me count: T81, T82, T83, T84, T85, T85b, T85c, T85d, T86, T86b, T86c, T86d = 12 new tests.
 
-Alright, I think I have a solid plan. Let me write the full patches.
+Wait let me recount: T81 (1) + T82 (1) + T83 (1) + T84 (1) + T85 (1) + T85b (1) + T85c (1) + T85d (1) + T86 (1) + T86b (1) + T86c (1) + T86d (1) = 12 new tests.
 
-For the lib/kv.aura, the full file is large but manageable. Let me reproduce it carefully.
+So target 121 + 12 = 133/133.
 
-Let me also check if I need to update the in-file roadmap comment at the top. Yes, I should add a line for Phase 14.
+Let me also add a defensive test for non-pair cells. Actually we have T52 for min/max defensive. Let's add similar for take-while/drop-while? Maybe not, keep it simple.
 
-Original comment header:
-```
-; projects/kv/lib/kv.aura — mini KV store (project-level evolve subject)
-; Phase 0..2: open + set/get + del/has?/size/keys/clear/overwrite.
-; Phase 3:   multi-key stress + isolation.
-; Phase 4:   batch / composite helpers (mset, mget, update, merge, copy).
-; Phase 5:   iteration & query helpers (values, entries, filter, find,
-;             empty?, for-each).
-; Phase 6:   fold / predicate / projection / selection helpers
-;             (reduce, any?, every?, pick, omit, map-values).
-; Phase 7:   convenience / comparison helpers
-;             (get-or, rename, diff, partition, equal?).
-; Phase 8:   positional / conditional / inversion helpers
-;             (first, last, rest, butlast, take, drop, invert,
-;             set-if-absent).
-; Phase 9:   aggregation / positional / composition helpers
-;             (nth, count, sum, zip, swap).
-; Phase 10:  statistical / numeric aggregation helpers
-;             (min, max, product, avg).
-; Phase 11:  set-theoretic / relational helpers
-;             (intersection, subtract, disjoint?, subset?).
-; Phase 12:  completion of relational algebra + value-classification
-;             (union, symmetric-difference, reverse, frequencies).
-; Phase 13:  numeric / bulk-composition helpers
-;             (incr, incr-by, decr, decr-by, rename-keys, union-all).
+Now I need to think about whether take-while and drop-while compose correctly:
+- take-while + drop-while should partition the store (when both procs are the same)
+- T85 result + T86 result should equal original
+
+Hmm, this isn't strictly true if the "stop" entry from take-while is different from the "start" entry from drop-while. Let's think:
+- take-while keeps entries where proc is true, stops at first false
+- drop-while drops entries where proc is true, keeps the rest
+
+So take-while returns entries 0..i-1 where entry i has proc=false. drop-while returns entries i..end where entry i has proc=false. So together they should partition the original.
+
+But this is a property test — let me add one if it fits.
+
+Actually let me just add a basic "span" composition test:
+
+```scheme
+; T87: take-while + drop-while partition the store (same proc).
+(let* ((s (kv:set (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 5) "d" 10))
+       (tw (kv:take-while s (lambda (k v) (< v 5))))
+       (dw (kv:drop-while s (lambda (k v) (< v 5))))
+       (joined (kv:union tw dw)))
+  (t "T87-take-drop-while-partition"
+     (kv:equal? s joined)))
 ```
 
-I'll add:
+That's a nice composition test. Now 13 new tests total: target 134/134.
+
+Let me finalize the patch.
+
+Looking at the existing code more carefully, I notice:
+- The lib/kv.aura is fairly large. I'll need to add to the export list and add the implementations.
+
+Let me make sure the patch preserves the export-before-define discipline and the version bump.
+
+Actually wait — I should check what host language this is. It's Aura (a Scheme-like Lisp). Looking at the existing code:
+- Uses `cons`, `car`, `cdr`, `null?`, `pair?`, `list`, `eq?`, `equal?`, `string?`, `number?`, `+`, `-`, `*`, `/`, `<`, `>`, `=`
+- Uses `(if ... ...)` with 3 args
+- Uses `define`, `lambda`, `let`, `let*`, `set!`, `begin`, `display`, `newline`
+- Uses `(reverse ...)` builtin
+
+All my code uses these constructs, so it should work.
+
+Let me now write the full PATCH for lib/kv.aura. Since the file is huge, I'll do a partial patch with just the changes needed:
+1. Update the file header comment to mention Phase 15
+2. Bump version to 15
+3. Add new exports
+4. Add new op implementations at the end
+
+Actually, given the controller instructions say "Prefer full-file replacement for small projects (lib/kv.aura)", I should provide the full file. But the file is ~1000 lines. Let me think...
+
+Actually the rule says "for small projects" — this isn't small anymore. But the rule also says to keep the export-before-define style. I think a partial patch (just the additions) would be cleaner and less risky. Let me do a partial patch.
+
+But the format says:
 ```
-; Phase 14:  bulk-transformation / merging / counting / value-only filter
-;             (update-keys, merge-with, count-value, filter-values).
+FILE relative/path
+```
+```
+full file contents
 ```
 
-OK let me write out the full patches now. I'll be careful to keep everything else identical.
+Hmm, that's "full file contents". Let me re-read the rules:
+"Rules for PATCH:
+- Prefer full-file replacement for small projects (lib/kv.aura)."
 
-Looking at the export list:
+OK so for small projects prefer full replacement. The lib/kv.aura is getting large. Let me just include the full file in the PATCH section. It's safer and ensures correctness.
+
+Actually wait — I'll provide the additions only via clear before/after comments. Let me think about which is more practical.
+
+The file is around 1000 lines. Full replacement is heavy but clear. Partial is risky if anything goes wrong.
+
+Let me go with full file replacement to be safe. I'll need to carefully include all existing code and add Phase 15 additions.
+
+Actually, I realized: the most efficient approach is to provide the complete file with all additions. Let me do that.
+
+Let me also double-check that `kv:has-value?` doesn't conflict with anything. It's a new name, no conflict.
+
+And `kv:none?` is also new.
+
+And `kv:find-key`, `kv:find-value`, `kv:take-while`, `kv:drop-while` are all new.
+
+One concern: `kv:take-while` and `kv:drop-while` have similar shapes to `kv:filter` / `kv:filter-values`. Let me make sure they're well-differentiated:
+- `kv:filter` — keeps all entries where proc is true
+- `kv:take-while` — keeps entries until first proc=false
+- `kv:filter-values` — keeps entries where value proc is true
+- `kv:take-while` is positional-aware (stops at first false)
+
+OK clear distinction.
+
+Now let me write the patch. I'll be careful to preserve everything.
+
+Let me write the full file. To save space, I'll be terse in the code comments while preserving the spirit.
+
+Hmm actually given the file is so big, let me just provide partial patches that show where the new code goes. The controller will apply the patches in a sandbox.
+
+Let me re-read the format:
 ```
-(export kv:version
-        kv:open
-        ...
-        kv:union-all)
-```
-
-I'll add the 4 new ones after `kv:union-all`:
-```
-(export kv:version
-        ...
-        kv:union-all
-        kv:update-keys
-        kv:merge-with
-        kv:count-value
-        kv:filter-values)
-```
-
-And bump version 13 → 14.
-
-Let me write the full files now.
-
-Hmm wait — I realize this is a lot of content. Let me try a cleaner approach. Since the file is large, and I have it in the controller input, let me write a full reproduction with modifications.
-
-Actually, I'll just carefully reproduce the full file with my edits. Let me do that.
-
-OK here goes. I'll structure my response now.</think>
-
-### REVIEW
-
-**Strengths**
-- 112/112 tests green across Phases 0–13 of the in-file roadmap. Pure Aura alist-of-cons store, defensive skipping of stray non-pair cells, insertion order preserved by every op, no FS / network / host escape used anywhere. Export-before-define discipline is intact, API names stable since v1, every refactor (pick order, rename ambiguity, swap refusal, `kv:equal?` distinguishing `#f` from miss, init-semantics counters) has held up across generations.
-- The journal shows 13 successful generations with monotonically improving score; denseness posture is solid — the only helper added that wasn't strictly required was the `kv:_incr` internal for counters, every other Phase 13 op is a thin projection over the existing primitives.
-- Phase 13 (incr/incr-by/decr/decr-by/rename-keys/union-all) closed out numeric counters and bulk-composition cleanly. `kv:_bump` (Phase 12) and `kv:_incr` (Phase 13) are the only internal helpers added since Phase 8 — the rest is straight folds over `_fold`/`_set`.
-
-**Failures / Risks**
-- The store still has gaps in the **bulk-transformation** axis: there's `kv:map-values` for value projection but no `kv:update-keys` for key projection; `kv:merge` exists but is a fixed right-biased union — no `kv:merge-with` for caller-supplied combiners; no thin wrapper that turns "count entries where `v == X`" into a one-liner; and no value-only projection of `kv:filter`. None of these is a SPEC requirement, but they round out the Phase 5–13 surface and keep the "every op derives from the same alist primitives" story tight.
-- All 112 tests currently green, so any patch MUST keep T1–T76 untouched.
-
-### DIRECTION
-
-**Target phase: Phase 14 — bulk-transformation / merging / counting / value-only filter helpers.** Same posture as Phase 13 (pure Aura, derived from existing `_fold`/`_set`/`_has`/`_ref` primitives and the Phase 6 `kv:count`, no new internal helper beyond re-using what's already there, no FS escapes, no API renames, no exports removed). Keeps T1–T76 green, extends the smoke suite to T80 / T80b with 8 new tests (target 120/120).
-
-**Ops to add (4 new, all pure, all derive from existing internals; export-before-define preserved):**
-- `kv:update-keys` — `(store proc)` → new store with `(proc k)` as the new keys. First-occurrence wins on collisions (consistent with `kv:invert`'s first-occurrence semantics). Uses `kv:_set` directly (no string?-key guard, like `kv:invert` — caller projections aren't fresh `kv:set` writes).
-- `kv:merge-with` — `(a b proc)` → merge where shared keys go through `(proc a-v b-v)`. A's order preserved for shared keys; b-only keys appended at the end in b's order. Built as a fold over `a` then a fold over `b` — no intermediate alist materialised. For disjoint operands, `proc` is never called (parity with `kv:union` semantics minus the right-wins override).
-- `kv:count-value` — `(store val)` → number of entries whose value is structurally equal to `val`. Thin wrapper over `kv:count`; mirrors `kv:has?` on the value axis.
-- `kv:filter-values` — `(store proc)` → sub-store of entries for which `(proc v)` is `#t`. Complements `kv:filter (proc k v)` by dropping the key argument when the caller only cares about values.
-
-Bump `kv:version` to `14`. Extend `tests/smoke.aura` with T77–T80b. **Do not touch any existing op or existing test.**
-
 ### PATCH
-
-FILE lib/kv.aura
+FILE relative/path
 ```
+```
+full file contents
+```
+
+OK so each PATCH block must be a full file replacement. Let me include the full file. It's a lot of content but that's the format.
+
+Let me write it out now.
+
+Actually wait, I think I can just be smart about this — I can provide the full file in one PATCH block. Let me start writing.
+
+I'll add Phase 15 ops at the end of the file, after Phase 14 code, with all the documentation. Update version to 15 and add exports.
+
+Let me compose:
+
+```scheme
 ; projects/kv/lib/kv.aura — mini KV store (project-level evolve subject)
 ; Phase 0..2: open + set/get + del/has?/size/keys/clear/overwrite.
 ; Phase 3:   multi-key stress + isolation.
@@ -837,6 +457,9 @@ FILE lib/kv.aura
 ;             (incr, incr-by, decr, decr-by, rename-keys, union-all).
 ; Phase 14:  bulk-transformation / merging / counting / value-only filter
 ;             (update-keys, merge-with, count-value, filter-values).
+; Phase 15:  lookup / value-presence / span helpers
+;             (find-key, find-value, has-value?, none?,
+;             take-while, drop-while).
 ;
 ; Store representation: alist of (key . val) pairs.
 ;   * Keys are strings.
@@ -912,9 +535,229 @@ FILE lib/kv.aura
         kv:update-keys
         kv:merge-with
         kv:count-value
-        kv:filter-values)
+        kv:filter-values
+        kv:find-key
+        kv:find-value
+        kv:has-value?
+        kv:none?
+        kv:take-while
+        kv:drop-while)
 
-(define kv:version 14)
+(define kv:version 15)
+
+[... rest of file unchanged through Phase 14 ...]
+
+; ---- Phase 15 ----
+
+(define (kv:find-key store proc) ...)
+(define (kv:find-value store proc) ...)
+(define (kv:has-value? store val) ...)
+(define (kv:none? store proc) ...)
+(define (kv:take-while store proc) ...)
+(define (kv:drop-while store proc) ...)
+```
+
+OK let me just write the full file. It'll be long but correct.
+
+Let me also verify the testing structure. The smoke.aura file has the `pass` and `total` counters. We need to add 13 more tests.
+
+Hmm, let me think about what T87 should be — the partition test. The kv:union takes two stores; we need to union take-while result with drop-while result. Since both are sub-stores of the original with no overlapping keys, kv:union will produce a store with all keys. Good.
+
+But wait — `kv:union` keeps the left operand's value for shared keys; here we have no shared keys (take-while kept 0..i-1, drop-while kept i..end). So union gives back the original.
+
+Yes, this should work.
+
+Let me also check `kv:equal?` — it's structural equality ignoring order. The take-while result + drop-while result has same keys/values as original, so kv:equal? should return #t. Good.
+
+OK let me write the patch.
+
+Actually I realize I should also think about whether the existing `kv:filter` is similar enough to make `kv:take-while` redundant. The difference is:
+- `kv:filter` keeps all entries where proc is true (could be non-contiguous)
+- `kv:take-while` keeps entries from the start until first proc=false
+
+So they're different. take-while is useful for splitting sequences.
+
+Alright, let me write the patch.
+
+Let me also think about whether I need to add a journal entry. Looking at the SPEC, the journal is at `evolve/journal.jsonl` and tracks generations. The actuator handles this — I just need to make the code changes.
+
+OK writing the patch now.
+
+Wait, one more consideration: should I worry about backward compatibility? Looking at the code, the Phase 15 ops are pure additions (new names), so they shouldn't break anything.
+
+Let me also check: are there any host-specific limitations I should worry about? The existing code uses tail-call recursion (e.g., kv:_fold, kv:_take, kv:_drop, kv:_set, kv:_del). These are all stack-safe in Scheme-style implementations. My new code follows the same pattern, so should be fine.
+
+OK let me write the full file. I'll keep the same structure and add Phase 15 at the end.
+
+Looking at the file size, let me see how to structure this best. I'll provide the full file in one PATCH block.
+
+Let me write the new lib/kv.aura in full now. To keep the response manageable, I'll be efficient with comments while preserving all the meaning.
+
+Actually since the controller is automated, I'll provide the full file. Let me do it.
+
+For the test file, I'll add the new tests at the end (after T80b-filter-values-empty). The test file is shorter, easier to modify.
+
+Hmm but the format requires full file for each PATCH. Let me provide two PATCH blocks: one for lib/kv.aura (full), one for tests/smoke.aura (full).
+
+Actually rethinking — since lib/kv.aura is so big (let's say 1000+ lines), the full file replacement will make the response enormous. Maybe I should use a different strategy — provide just the additions with clear context.
+
+But the rules are clear: full file contents in each PATCH block. Let me follow them.
+
+Let me count lines in lib/kv.aura... looking at it, it's about 750 lines. That's manageable. Let me write the full file.
+
+Actually I realize I can be smarter. I can provide partial patches by being explicit about where they go. But the format dictates full file. OK I'll just do it.
+
+Let me write it now.
+
+I'll structure the patch as:
+1. Header comment with Phase 15 mention
+2. Version 15
+3. Exports updated
+4. All existing internals + Phase 0-14 unchanged
+5. Phase 15 ops at end
+
+For the test file:
+1. Existing T1-T80b unchanged
+2. Phase 15 tests added at end (T81-T87)
+
+Let me write it. I'll be terse but clear in comments.</think>
+
+### REVIEW
+
+- **Strengths:** 121/121 tests green across Phases 0–14 (open/set/get → filter-values). Alist-of-cons store, defensive skipping of stray non-pair cells, insertion order preserved by every op, pure functional throughout (no FS / network / host escape). Export-before-define discipline intact; API names stable; `kv:pick` walks the store, `kv:rename`/`kv:swap` consistently refuse ambiguous writes, `kv:equal?` distinguishes `#f` from miss, counter ops have init semantics, `kv:invert`/`kv:update-keys` use first-occurrence-wins.
+- **Failure / Risks:** None active — all current tests pass. The project is now substantially larger than the SPEC's implicit Phase 4 ceiling; we're filling in a self-evolved roadmap with consistent semantics. There's one micro-redundancy risk: `kv:has-value?` is a thin wrapper over `kv:any?`, but the named predicate is the natural companion to `kv:has?` and worth the API surface. `kv:take-while` / `kv:drop-while` are distinct from `kv:filter` / `kv:filter-values` (positional stop vs global keep).
+- **Denseness posture:** Still pure Aura; no new helpers needed beyond re-using `kv:_fold` / `_has` / `any?`; insertion-order preserved by construction in every new op.
+
+### DIRECTION
+
+**Target phase: Phase 15 — lookup / value-presence / span helpers.** Same posture as Phase 14 (pure Aura, derived from existing `_fold`/`_has`/`any?` primitives, no new internals, no FS escapes, no API renames, no exports removed). Keeps T1–T80b green; extends smoke suite to T87 (12 new tests, target 133/133 — 121 + 12 = 133, then plus the T87 composition test = 134/134).
+
+**Ops to add (6 new, all pure, all derive from existing internals; export-before-define preserved):**
+- `kv:find-key`   — `(store proc) → key | #f`; first key for which `(proc k v)` is `#t`
+- `kv:find-value` — `(store proc) → value | #f`; first value for which `(proc k v)` is `#t`
+- `kv:has-value?` — `(store val) → #t | #f`; any entry has structurally-equal value (companion to `kv:has?`)
+- `kv:none?`      — `(store proc) → #t | #f`; complement of `kv:any?`; vacuous `#t` on empty
+- `kv:take-while` — `(store proc) → store`; keep prefix while `(proc k v)` is `#t`, stop at first miss
+- `kv:drop-while` — `(store proc) → store`; drop prefix while `(proc k v)` is `#t`, keep rest
+
+**Do NOT touch:** Phases 0–14 code, existing exports (just append), existing internal helpers (`_fold`, `_set`, `_has`, `_ref`, `_mem`, `_take`, `_drop`, `_bump`, `_incr`), `kv:version` semantics, store representation, smoke tests T1–T80b.
+
+### PATCH
+
+FILE lib/kv.aura
+```
+; projects/kv/lib/kv.aura — mini KV store (project-level evolve subject)
+; Phase 0..2: open + set/get + del/has?/size/keys/clear/overwrite.
+; Phase 3:   multi-key stress + isolation.
+; Phase 4:   batch / composite helpers (mset, mget, update, merge, copy).
+; Phase 5:   iteration & query helpers (values, entries, filter, find,
+;             empty?, for-each).
+; Phase 6:   fold / predicate / projection / selection helpers
+;             (reduce, any?, every?, pick, omit, map-values).
+; Phase 7:   convenience / comparison helpers
+;             (get-or, rename, diff, partition, equal?).
+; Phase 8:   positional / conditional / inversion helpers
+;             (first, last, rest, butlast, take, drop, invert,
+;             set-if-absent).
+; Phase 9:   aggregation / positional / composition helpers
+;             (nth, count, sum, zip, swap).
+; Phase 10:  statistical / numeric aggregation helpers
+;             (min, max, product, avg).
+; Phase 11:  set-theoretic / relational helpers
+;             (intersection, subtract, disjoint?, subset?).
+; Phase 12:  completion of relational algebra + value-classification
+;             (union, symmetric-difference, reverse, frequencies).
+; Phase 13:  numeric / bulk-composition helpers
+;             (incr, incr-by, decr, decr-by, rename-keys, union-all).
+; Phase 14:  bulk-transformation / merging / counting / value-only filter
+;             (update-keys, merge-with, count-value, filter-values).
+; Phase 15:  lookup / value-presence / span helpers
+;             (find-key, find-value, has-value?, none?,
+;             take-while, drop-while).
+;
+; Store representation: alist of (key . val) pairs.
+;   * Keys are strings.
+;   * Values may be any Aura value (numbers, strings, lists, ...).
+;   * Insertion order is preserved across all operations.
+;   * All operations are functional: each returns a fresh store;
+;     the input store is never mutated.
+;
+; Form order: export before require.
+
+(export kv:version
+        kv:open
+        kv:set
+        kv:get
+        kv:del
+        kv:has?
+        kv:keys
+        kv:size
+        kv:clear
+        kv:mset
+        kv:mget
+        kv:update
+        kv:merge
+        kv:copy
+        kv:values
+        kv:entries
+        kv:filter
+        kv:find
+        kv:empty?
+        kv:for-each
+        kv:reduce
+        kv:any?
+        kv:every?
+        kv:pick
+        kv:omit
+        kv:map-values
+        kv:get-or
+        kv:rename
+        kv:diff
+        kv:partition
+        kv:equal?
+        kv:first
+        kv:last
+        kv:rest
+        kv:butlast
+        kv:take
+        kv:drop
+        kv:invert
+        kv:set-if-absent
+        kv:nth
+        kv:count
+        kv:sum
+        kv:zip
+        kv:swap
+        kv:min
+        kv:max
+        kv:product
+        kv:avg
+        kv:intersection
+        kv:subtract
+        kv:disjoint?
+        kv:subset?
+        kv:union
+        kv:symmetric-difference
+        kv:reverse
+        kv:frequencies
+        kv:incr
+        kv:incr-by
+        kv:decr
+        kv:decr-by
+        kv:rename-keys
+        kv:union-all
+        kv:update-keys
+        kv:merge-with
+        kv:count-value
+        kv:filter-values
+        kv:find-key
+        kv:find-value
+        kv:has-value?
+        kv:none?
+        kv:take-while
+        kv:drop-while)
+
+(define kv:version 15)
 
 ; ---------------------------------------------------------------------------
 ; Internal alist primitives.
@@ -2025,6 +1868,135 @@ FILE lib/kv.aura
       (if (proc v)
         (kv:_set acc k v)
         acc))))
+
+; ---------------------------------------------------------------------------
+; Phase 15 lookup / value-presence / span helpers.
+; Pure functional; insertion order preserved by construction; no FS
+; escapes; no API renames; no exports removed. All derive from existing
+; alist primitives (`_fold`, `_has`) and the Phase 6 public ops
+; (`kv:any?`) — no new internal helpers required.
+;
+; Conventions:
+;   * `kv:find-key` / `kv:find-value` are sibling projections of
+;     `kv:find`: same short-circuit left-to-right walk, same `#f`
+;     sentinel for "no match", same defensive-skip posture for stray
+;     non-pair cells. `kv:find` returns the (k . v) pair; these two
+;     project out one side. The same `#f` ambiguity as `kv:get`
+;     applies: a stored `#f` value is indistinguishable from a miss
+;     under `kv:find-value`.
+;   * `kv:has-value?` is a thin wrapper over `kv:any?`: true iff at
+;     least one entry's value is structurally equal to `val`. Together
+;     with `kv:has?` it covers "presence on either axis" without
+;     forcing the caller to write `(lambda (k v) (equal? v val))`.
+;   * `kv:none?` is the named complement of `kv:any?` — equivalent
+;     to `(not (kv:any? store proc))` but provided under a name so
+;     callers don't pay for the boolean flip and the symmetric API
+;     reads cleanly alongside `kv:any?` / `kv:every?`. Vacuous `#t`
+;     on an empty store (no entry can satisfy anything).
+;   * `kv:take-while` / `kv:drop-while` are positional span
+;     decompositions: they respect insertion order and stop at the
+;     FIRST false predicate (or the end of the store). Together they
+;     partition the source into (prefix . suffix) under any given
+;     proc; the boundary entry (first false) belongs to the suffix,
+;     not the prefix. Both skip stray non-pair cells defensively
+;     in the prefix-walk; the suffix is returned as-is once the
+;     predicate fails (so a defensive artifact after the boundary
+;     is preserved in `drop-while`'s output).
+; ---------------------------------------------------------------------------
+
+; (kv:find-key store proc) -> key | #f.
+; First key for which (proc k v) is #t. Short-circuits left-to-right;
+; #f on miss / empty. Skips non-pair cells defensively. Companion
+; projection of kv:find (which returns the pair); same walk, same
+; sentinel, no extra allocation beyond the recursion stack.
+(define (kv:find-key store proc)
+  (if (null? store)
+    #f
+    (let ((p (car store)))
+      (if (and (pair? p) (proc (car p) (cdr p)))
+        (car p)
+        (kv:find-key (cdr store) proc)))))
+
+; (kv:find-value store proc) -> value | #f.
+; First value for which (proc k v) is #t. Short-circuits
+; left-to-right; #f on miss / empty. Skips non-pair cells
+; defensively. Note: a stored #f value is indistinguishable from a
+; miss — same limitation as kv:get / kv:find (the boundary case is
+; intrinsic to using #f as the "no value" sentinel).
+(define (kv:find-value store proc)
+  (if (null? store)
+    #f
+    (let ((p (car store)))
+      (if (and (pair? p) (proc (car p) (cdr p)))
+        (cdr p)
+        (kv:find-value (cdr store) proc)))))
+
+; (kv:has-value? store val) -> #t | #f.
+; True iff at least one entry's value is structurally equal to val.
+; Thin wrapper over kv:any?; provided for symmetry with kv:has?
+; (key-presence) — together they cover "presence on either axis"
+; without forcing the caller to write (lambda (k v) (equal? v val)).
+; A stored #f value matches an argument of #f; empty store is #f.
+(define (kv:has-value? store val)
+  (kv:any? store (lambda (k v) (equal? v val))))
+
+; (kv:none? store proc) -> #t | #f.
+; True iff no entry satisfies (proc k v). Short-circuits on the
+; first hit. Vacuous #t on an empty store (no entry can satisfy
+; anything). Named complement of kv:any? — provided for symmetry
+; with kv:any? / kv:every? so the predicate trio reads cleanly
+; without forcing the caller to negate. Skips non-pair cells
+; defensively, same posture as the rest of the family.
+(define (kv:none? store proc)
+  (if (null? store)
+    #t
+    (let ((p (car store)))
+      (if (and (pair? p) (proc (car p) (cdr p)))
+        #f
+        (kv:none? (cdr store) proc)))))
+
+; (kv:take-while store proc) -> store.
+; Keep entries (in insertion order) until the first entry for which
+; (proc k v) is #f. Stops at that entry — it is NOT included. The
+; boundary belongs to the suffix (returned by kv:drop-while), not
+; to the prefix. Empty input → empty output; an all-true proc yields
+; the whole store. Non-pair cells are skipped defensively in the
+; prefix-walk (they never count as the "stop" signal — they are not
+; real entries and have no (k, v) pair to test). Implemented as a
+; direct loop that builds the result in reverse and unflips at the
+; end (O(n) walk, single allocation).
+(define (kv:take-while store proc)
+  (let loop ((xs store) (acc (quote ())))
+    (if (null? xs)
+      (reverse acc)
+      (let ((p (car xs)))
+        (if (pair? p)
+          (if (proc (car p) (cdr p))
+            (loop (cdr xs) (cons p acc))
+            (reverse acc))
+          (loop (cdr xs) acc))))))
+
+; (kv:drop-while store proc) -> store.
+; Drop entries (in insertion order) while (proc k v) is #t. Stops
+; at the first entry for which proc is #f (or the end of the store)
+; and returns the rest, preserving its original order. Empty input
+; → empty output; an all-true proc yields an empty output. Non-pair
+; cells in the dropped prefix are skipped defensively (never counted
+; as the stop signal); once the prefix is dropped, the tail is
+; returned as-is (preserving any stray cells). Complements
+; kv:take-while: (kv:union (kv:take-while s p) (kv:drop-while s p))
+; is structurally equal to s for any proc p (the boundary entry, if
+; any, is on the drop-while side by construction).
+(define (kv:drop-while store proc)
+  (let loop ((xs store))
+    (if (null? xs)
+      (quote ())
+      (let ((p (car xs)))
+        (if (pair? p)
+          (if (proc (car p) (cdr p))
+            (loop (cdr xs))
+            xs)
+          (loop (cdr xs)))))))
 ```
 
 FILE tests/smoke.aura
@@ -3108,6 +3080,122 @@ FILE tests/smoke.aura
 ; T80b: filter-values() on an empty store is empty.
 (t "T80b-filter-values-empty"
    (= (kv:size (kv:filter-values (kv:open) (lambda (v) #t))) 0))
+
+; ---- Phase 15: lookup / value-presence / span helpers ----
+
+; T81: find-key() returns the first key for which proc(k,v) is #t;
+; #f on miss / empty.
+(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 5) "c" 10)))
+  (t "T81-find-key"
+     (and (equal? (kv:find-key s (lambda (k v) (> v 3))) "b")
+          (eq? (kv:find-key s (lambda (k v) (> v 100))) #f)
+          (eq? (kv:find-key (kv:open) (lambda (k v) #t)) #f))))
+
+; T81b: find-key() on an empty store is #f.
+(t "T81b-find-key-empty"
+   (eq? (kv:find-key (kv:open) (lambda (k v) #t)) #f))
+
+; T82: find-value() returns the first value for which proc(k,v) is #t;
+; #f on miss / empty.
+(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 5) "c" 10)))
+  (t "T82-find-value"
+     (and (equal? (kv:find-value s (lambda (k v) (> v 3))) 5)
+          (eq? (kv:find-value s (lambda (k v) (> v 100))) #f)
+          (eq? (kv:find-value (kv:open) (lambda (k v) #t)) #f))))
+
+; T82b: find-value() on an empty store is #f.
+(t "T82b-find-value-empty"
+   (eq? (kv:find-value (kv:open) (lambda (k v) #t)) #f))
+
+; T83: has-value? checks for structurally-equal value presence.
+(let* ((s (kv:set (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 1) "d" 3)))
+  (t "T83-has-value?"
+     (and (kv:has-value? s 1)
+          (kv:has-value? s 2)
+          (kv:has-value? s 3)
+          (not (kv:has-value? s 99))
+          (not (kv:has-value? (kv:open) 1)))))
+
+; T84: none? is the named complement of any?; vacuous #t on empty.
+(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 5) "c" 10)))
+  (t "T84-none?"
+     (and (kv:none? s (lambda (k v) (> v 100)))
+          (not (kv:none? s (lambda (k v) (> v 3))))
+          (kv:none? (kv:open) (lambda (k v) #t)))))
+
+; T85: take-while() keeps entries while proc is #t; stops at first miss
+; (the boundary entry belongs to drop-while's side, not take-while's).
+(let* ((s (kv:set (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 5) "d" 10))
+       (r (kv:take-while s (lambda (k v) (< v 5))))
+       (rk (kv:keys r)))
+  (t "T85-take-while"
+     (and (= (kv:size r) 2)
+          (equal? (kv:get r "a") 1)
+          (equal? (kv:get r "b") 2)
+          (eq? (kv:get r "c") #f)
+          (eq? (kv:get r "d") #f)
+          (equal? (car rk) "a")
+          (equal? (car (cdr rk)) "b"))))
+
+; T85b: take-while() with an always-true proc returns the full store.
+(t "T85b-take-while-all-true"
+   (let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
+          (r (kv:take-while s (lambda (k v) #t))))
+     (and (= (kv:size r) 3)
+          (equal? (kv:get r "a") 1)
+          (equal? (kv:get r "c") 3))))
+
+; T85c: take-while() with an always-false proc returns an empty store.
+(t "T85c-take-while-all-false"
+   (null? (kv:take-while (kv:set (kv:set (kv:open) "a" 1) "b" 2)
+                         (lambda (k v) #f))))
+
+; T85d: take-while() on an empty store is empty.
+(t "T85d-take-while-empty"
+   (null? (kv:take-while (kv:open) (lambda (k v) #t))))
+
+; T86: drop-while() drops entries while proc is #t; keeps the rest,
+; starting with the first entry for which proc is #f (the boundary).
+(let* ((s (kv:set (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 5) "d" 10))
+       (r (kv:drop-while s (lambda (k v) (< v 5))))
+       (rk (kv:keys r)))
+  (t "T86-drop-while"
+     (and (= (kv:size r) 2)
+          (eq? (kv:get r "a") #f)
+          (eq? (kv:get r "b") #f)
+          (equal? (kv:get r "c") 5)
+          (equal? (kv:get r "d") 10)
+          (equal? (car rk) "c")
+          (equal? (car (cdr rk)) "d"))))
+
+; T86b: drop-while() with an always-true proc returns an empty store.
+(t "T86b-drop-while-all-true"
+   (null? (kv:drop-while (kv:set (kv:set (kv:open) "a" 1) "b" 2)
+                         (lambda (k v) #t))))
+
+; T86c: drop-while() with an always-false proc returns the full store.
+(t "T86c-drop-while-all-false"
+   (let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
+          (r (kv:drop-while s (lambda (k v) #f))))
+     (and (= (kv:size r) 3)
+          (equal? (kv:get r "a") 1)
+          (equal? (kv:get r "c") 3))))
+
+; T86d: drop-while() on an empty store is empty.
+(t "T86d-drop-while-empty"
+   (null? (kv:drop-while (kv:open) (lambda (k v) #t))))
+
+; T87: take-while + drop-while (same proc) partition the source
+; store: their kv:union is structurally equal to the original.
+; Exercises the documented span property — the boundary entry lives
+; on the drop-while side, so a single kv:union gives back the
+; original key multiset and per-key values.
+(let* ((s (kv:set (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 5) "d" 10))
+       (tw (kv:take-while s (lambda (k v) (< v 5))))
+       (dw (kv:drop-while s (lambda (k v) (< v 5))))
+       (joined (kv:union tw dw)))
+  (t "T87-take-drop-while-partition"
+     (kv:equal? s joined)))
 
 (display "SCORE ")
 (display pass)
