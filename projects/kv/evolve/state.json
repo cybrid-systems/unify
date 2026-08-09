@@ -511,7 +511,7 @@
       "direction": "- **Single targeted patch on `lib/kv-engine.aura`**: add engine-local while-loop body primitives (`_ref-loop`, `_has-loop`, `_set-loop`, `_del-loop`, `_rev-loop`) and have `engine-get` / `engine-set` / `engine-del` / `engine-has?` route through them instead of the recursive `kv:get` / `kv:set` / `kv:del` / `kv:has?`. Engine's public smoke contract is unchanged because the underlying alist shape is identical.\n- Add a **mode-dispatched fast path** in `engine-get`: when `mode` is not `cache`/`hybri"
     }
   ],
-  "updated": "2026-08-09T13:51Z",
+  "updated": "2026-08-09T14:12Z",
   "last_review": "- **Correctness floor**: smoke 148/148 full-green across Phases 0\u201316. Pure Aura alist-of-cons store, defensive skip of stray non-pair cells, insertion order preserved by every op. API surface stable since v1.\n- **Load fitness (baseline 7547)**:\n  - uniform-read 1655 ops/s \u00b7 hotspot-read 2742 ops/s \u00b7 write-heavy 1523 ops/s \u00b7 mixed 1627 ops/s\n  - All four profiles run under the engine's **default alist policy** (L5/L6 are explicit hybrid/alist TUNE correctness gates and don't feed load_score). Per-profile policy tuning (gen 19) and HIT-skip cache_put (gen 20) are already optimal at the policy layer.\n  - **Bottleneck**: body walk dominates. `kv:get` / `kv:set` / `kv:del` are implemented as **recursive** alist walks (`kv:_ref` / `kv:_set` / `kv:_del`). Each recursive step costs a frame in addition to the cell ops, and Aura's host tail-call behavior is uncertain \u2014 the engine's `kv:_cache-lookup` already uses `while`/`set!` and works fine, so a while-loop body walker is known-good.\n  - The v2/v3 engine-get path still pays for `index` / `cache` field accesses and a `use-c` / `found` / `ncache` computation in alist mode where they're all unreachable.\n- **Risk**: introducing engine-local primitives (`_ref-loop` / `_set-loop` / `_del-loop` / `_has-loop` / `_rev-loop`) must preserve smoke semantics exactly \u2014 same insertion-order on overwrite and append, same `#f` on miss, same defensive skip of non-pair cells. All five helpers are pure `while`/`set!` translations of the existing recursive primitives \u2014 the trace checks out for found-at-head, found-at-tail, found-in-middle, not-found, and delete cases.",
   "last_direction": "- **Single targeted patch on `lib/kv-engine.aura`**: add engine-local while-loop body primitives (`_ref-loop`, `_has-loop`, `_set-loop`, `_del-loop`, `_rev-loop`) and have `engine-get` / `engine-set` / `engine-del` / `engine-has?` route through them instead of the recursive `kv:get` / `kv:set` / `kv:del` / `kv:has?`. Engine's public smoke contract is unchanged because the underlying alist shape is identical.\n- Add a **mode-dispatched fast path** in `engine-get`: when `mode` is not `cache`/`hybrid` (i.e., the default alist mode that all four load-sim profiles actually exercise), skip the `index` field access, the `cache` field access, the `use-c` computation, and the unreachable `found` / `ncache` bindings. One `kv:_ref-loop` body walk + one stats bump + one `mk-eng` \u2014 that's the whole hot path.\n- Cache/hybrid path stays exactly as in v2/v3 (HIT still skips cache_put promotion; MISS still does `_ref-loop` + optional cache_put). The hybrid branch keeps the v3 win.\n- **Bump** `kv:engine-v",
   "best_load_score": 9272.0,
@@ -531,9 +531,9 @@
     "ts": "2026-08-09T13:19Z"
   },
   "last_resident": {
-    "verify": "6937",
+    "verify": "8455",
     "applied": true,
     "mutate_ops": "93",
-    "ts": "2026-08-09T13:51Z"
+    "ts": "2026-08-09T14:12Z"
   }
 }
