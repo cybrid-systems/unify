@@ -46,7 +46,7 @@
 
 (require "kv" all:)
 
-(define kv:engine-version 3)
+(define kv:engine-version 4)
 
 ; engine = ('kv-engine body index cache stats policy)
 ; stats  = (reads writes hits misses rebuilds)
@@ -227,8 +227,9 @@
               (kv:_mk-eng body index cache
                           (kv:_bump stats 1 0 1 0 0)
                           policy))
-        ; MISS: body walk + (optionally) cache_put + miss bump.
-        (let* ((v (kv:get body k))
+        ; MISS: body walk via plant-body-get hook when bound (daemon structure
+        ; mutate rebinds this free name); else plain kv:get.
+        (let* ((v (try (plant-body-get body k) (catch (e) (kv:get body k))))
                (found (not (eq? v #f)))
                (ncache (if (and use-c found)
                          (kv:_cache-put cache k v (kv:_pol-csize policy))
