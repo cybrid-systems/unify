@@ -1,6 +1,6 @@
 ; Auto-generated explore subject (string truth after multi-cand select)
-; generation=66 updated=2026-08-09T16:44Z
-; last_axis=kernel last_span=hephaestus
+; generation=67 updated=2026-08-09T16:51Z
+; last_axis=leaf last_span=prometheus
 (define score (lambda (x) (* x x x)))
 (define kernel (lambda (n) (/ (* n (- n 1)) 2)))
 (define leaf (lambda (x) (* x 1)))
