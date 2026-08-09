@@ -168,6 +168,10 @@ def build_user(
 {test_tail}
 ```
 
+If SCORE is not full: list every FAIL line, fix those first with the **smallest**
+patch that still loads (prefer full-file only if short; otherwise surgical).
+If SCORE is full: advance a new phase with new tests + implementation.
+
 Respond with ### REVIEW, ### DIRECTION, ### PATCH only.
 """
 

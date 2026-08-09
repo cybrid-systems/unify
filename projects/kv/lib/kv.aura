@@ -154,9 +154,16 @@
         (cons p (kv:_set (cdr xs) key val))))))
 
 ; (kv:_del xs key out) -> fresh alist without `key`, preserving order.
+; Uses kv:_rev (not host reverse) — host reverse is unreliable on pair lists.
+(define (kv:_rev xs)
+  (let loop ((ys xs) (acc (quote ())))
+    (if (null? ys)
+      acc
+      (loop (cdr ys) (cons (car ys) acc)))))
+
 (define (kv:_del xs key out)
   (if (null? xs)
-    (reverse out)
+    (kv:_rev out)
     (let ((p (car xs)))
       (if (and (pair? p) (equal? (car p) key))
         (kv:_del (cdr xs) key out)
@@ -409,12 +416,17 @@
 ; Replaces key `old` with `new`, preserving position. Refuses (returns
 ; store unchanged) if `old` is missing OR if `new` is already present
 ; (ambiguity refusal, consistent with kv:swap).
+; Note: must rewrite key in-place — del+set would move the entry to the end.
 (define (kv:rename store old new)
-  (if (kv:_has store old)
-    (if (kv:_has store new)
-      store
-      (kv:_set (kv:_del store old (quote ())) new (kv:_ref store old)))
-    store))
+  (if (or (not (kv:_has store old)) (kv:_has store new))
+    store
+    (let loop ((xs store))
+      (if (null? xs)
+        (quote ())
+        (let ((p (car xs)))
+          (if (and (pair? p) (equal? (car p) old))
+            (cons (cons new (cdr p)) (cdr xs))
+            (cons p (loop (cdr xs)))))))))
 
 ; (kv:diff a b) -> (added removed changed).
 ; Three-way diff between stores `a` (reference) and `b` (current).
@@ -1012,33 +1024,38 @@
 ;     (whatever `<` decides).
 ; ---------------------------------------------------------------------------
 
-; (kv:sort-by store proc) -> store.
-; Sort entries by (proc k v) ascending. Stable: insertion order is the
-; tiebreaker — on equal (proc k v), the earlier source entry comes
-; first. Implementation: walk source left-to-right; for each entry p,
-; compute nk = (proc (car p) (cdr p)) and insert p into the
-; accumulator at the correct sorted position. The boundary in the
-; accumulator is the first q whose sort-key is STRICTLY GREATER than
-; nk; p is inserted just before that q, after all entries with key
-; <= nk. This yields source-order stability on ties.
-(define (kv:sort-by store proc)
-  (let loop ((xs store) (acc (quote ())))
-    (if (null? xs)
-      acc
-      (let ((p (car xs)))
+; (kv:_sort-min xs proc) -> first pair p minimizing (proc k v); first wins ties.
+(define (kv:_sort-min xs proc)
+  (let loop ((ys xs) (best #f) (best-k #f))
+    (if (null? ys)
+      best
+      (let ((p (car ys)))
         (if (pair? p)
-          (let ((nk (proc (car p) (cdr p))))
-            (let lp ((ys acc) (pre (quote ())))
-              (if (null? ys)
-                (loop (cdr xs)
-                      (kv:_append (reverse pre) (cons p (quote ()))))
-                (if (< nk (proc (car ys) (cdr ys)))
-                  (loop (cdr xs)
-                        (kv:_append
-                          (kv:_append (reverse pre) (cons p (quote ())))
-                          ys))
-                  (lp (cdr ys) (cons (car ys) pre))))))
-          (loop (cdr xs) acc))))))
+          (let ((k (proc (car p) (cdr p))))
+            (if (or (eq? best #f) (< k best-k))
+              (loop (cdr ys) p k)
+              (loop (cdr ys) best best-k)))
+          (loop (cdr ys) best best-k))))))
+
+; (kv:_drop-one xs p) -> xs without first entry equal? to p (pair identity by equal?).
+(define (kv:_drop-one xs p)
+  (if (null? xs)
+    (quote ())
+    (if (equal? (car xs) p)
+      (cdr xs)
+      (cons (car xs) (kv:_drop-one (cdr xs) p)))))
+
+; (kv:sort-by store proc) -> store.
+; Selection-sort ascending by (proc k v). Stable: first-occurrence min wins ties
+; (no host reverse; no nested named-let — both host-sensitive on this Aura).
+(define (kv:sort-by store proc)
+  (let loop ((src store) (out (quote ())))
+    (if (null? src)
+      out
+      (let ((best (kv:_sort-min src proc)))
+        (if (eq? best #f)
+          out
+          (loop (kv:_drop-one src best) (kv:_append out (list best))))))))
 
 ; (kv:sort store) -> store.
 ; Sort by value ascending. Convenience for (kv:sort-by s (lambda (k v) v)).
