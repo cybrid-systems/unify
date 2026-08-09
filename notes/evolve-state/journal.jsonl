@@ -14,3 +14,4 @@
 {"ts": "2026-08-09T04:13Z", "from_generation": 13, "to_generation": 14, "factor": 29, "body": "(lambda (x) (* x 29))", "decision": "select", "candidates_tried": 1, "candidates_n": 1, "mode": "multi-sandbox-select"}
 {"ts": "2026-08-09T04:14Z", "from_generation": 14, "to_generation": 15, "factor": 31, "body": "(lambda (x) (* x 31))", "decision": "select", "candidates_tried": 1, "candidates_n": 1, "mode": "multi-sandbox-select"}
 {"ts": "2026-08-09T04:15Z", "from_generation": 15, "to_generation": 16, "factor": 33, "body": "(lambda (x) (* x 33))", "decision": "select", "candidates_tried": 1, "candidates_n": 1, "mode": "multi-sandbox-select"}
+{"ts": "2026-08-09T04:17Z", "from_generation": 16, "to_generation": 17, "factor": 35, "body": "(lambda (x) (* x 35))", "decision": "select", "candidates_tried": 1, "candidates_n": 1, "mode": "multi-sandbox-select"}
