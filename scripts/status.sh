@@ -11,7 +11,18 @@ echo "log_root: $LOG_ROOT"
 
 if [[ -f "$ROOT/notes/evolve-state/state.json" ]]; then
   echo "evolve-state:"
-  python3 -c 'import json;s=json.load(open("'"$ROOT"'/notes/evolve-state/state.json"));print("  gen=%s factor=%s body=%s decision=%s"%(s.get("generation"),s.get("factor"),s.get("body"),s.get("last_decision")))' 2>/dev/null || true
+  python3 -c '
+import json
+s=json.load(open("'"$ROOT"'/notes/evolve-state/state.json"))
+print("  mode=%s gen=%s last=%s/%s" % (s.get("mode"), s.get("generation"), s.get("last_axis"), s.get("last_span")))
+subs=s.get("subjects") or {}
+if subs:
+  for k in ("score","kernel","leaf","hop"):
+    if k in subs:
+      print("  %s: %s" % (k, subs[k].get("body")))
+else:
+  print("  body=%s factor=%s" % (s.get("body"), s.get("factor")))
+' 2>/dev/null || true
 fi
 
 if [[ ! -e "$LATEST" ]]; then
