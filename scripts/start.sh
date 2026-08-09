@@ -39,12 +39,14 @@ case "$cmd" in
       echo "warn: no MiniMax key — live rounds use force-body offline path"
     fi
     export UNIFY_MAX_CYCLES="${UNIFY_MAX_CYCLES:-0}"
-    export UNIFY_LIVE_N="${UNIFY_LIVE_N:-3}"
-    export UNIFY_SLEEP_SEC="${UNIFY_SLEEP_SEC:-45}"
-    export UNIFY_OFFLINE_EVERY="${UNIFY_OFFLINE_EVERY:-2}"
+    export UNIFY_LIVE_N="${UNIFY_LIVE_N:-2}"
+    export UNIFY_SLEEP_SEC="${UNIFY_SLEEP_SEC:-30}"
+    export UNIFY_OFFLINE_EVERY="${UNIFY_OFFLINE_EVERY:-3}"
     export UNIFY_AUTO_ISSUE="${UNIFY_AUTO_ISSUE:-1}"
     export UNIFY_SELF_EVOLVE="${UNIFY_SELF_EVOLVE:-0}"
-    echo "unify start (fg) LIVE_N=$UNIFY_LIVE_N SLEEP=$UNIFY_SLEEP_SEC"
+    export UNIFY_DURABLE_EVOLVE="${UNIFY_DURABLE_EVOLVE:-1}"
+    export UNIFY_GIT_COMMIT="${UNIFY_GIT_COMMIT:-1}"
+    echo "unify start (fg) LIVE_N=$UNIFY_LIVE_N durable=$UNIFY_DURABLE_EVOLVE git_commit=$UNIFY_GIT_COMMIT"
     exec ./scripts/run-continuous.sh
     ;;
   bg|start|"")
@@ -64,17 +66,21 @@ case "$cmd" in
       echo "warn: no MiniMax key — live rounds use force-body offline path"
     fi
     export UNIFY_MAX_CYCLES="${UNIFY_MAX_CYCLES:-0}"
-    export UNIFY_LIVE_N="${UNIFY_LIVE_N:-3}"
-    export UNIFY_SLEEP_SEC="${UNIFY_SLEEP_SEC:-45}"
-    export UNIFY_OFFLINE_EVERY="${UNIFY_OFFLINE_EVERY:-2}"
+    export UNIFY_LIVE_N="${UNIFY_LIVE_N:-2}"
+    export UNIFY_SLEEP_SEC="${UNIFY_SLEEP_SEC:-30}"
+    export UNIFY_OFFLINE_EVERY="${UNIFY_OFFLINE_EVERY:-3}"
     export UNIFY_AUTO_ISSUE="${UNIFY_AUTO_ISSUE:-1}"
     export UNIFY_SELF_EVOLVE="${UNIFY_SELF_EVOLVE:-0}"
+    export UNIFY_DURABLE_EVOLVE="${UNIFY_DURABLE_EVOLVE:-1}"
+    export UNIFY_GIT_COMMIT="${UNIFY_GIT_COMMIT:-1}"
     nohup ./scripts/run-continuous.sh >>"$LOG_ROOT/nohup.out" 2>&1 &
     pid=$!
     sleep 1
     echo "started pid=$pid"
+    echo "  durable evolve + git commit: ON (notes/evolve-state/)"
     echo "  status:  $0 status"
     echo "  logs:    tail -f logs/runs/latest/master.log"
+    echo "  state:   cat notes/evolve-state/state.json"
     echo "  stop:    $0 stop"
     ./scripts/status.sh 2>/dev/null | head -n 12 || true
     ;;

@@ -9,6 +9,11 @@ LATEST="$LOG_ROOT/latest"
 echo "=== Unify continuous status ==="
 echo "log_root: $LOG_ROOT"
 
+if [[ -f "$ROOT/notes/evolve-state/state.json" ]]; then
+  echo "evolve-state:"
+  python3 -c 'import json;s=json.load(open("'"$ROOT"'/notes/evolve-state/state.json"));print("  gen=%s factor=%s body=%s decision=%s"%(s.get("generation"),s.get("factor"),s.get("body"),s.get("last_decision")))' 2>/dev/null || true
+fi
+
 if [[ ! -e "$LATEST" ]]; then
   echo "no run yet (missing $LATEST)"
   exit 1

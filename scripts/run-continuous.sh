@@ -16,6 +16,9 @@
 #   UNIFY_AUTO_ISSUE      allow API create after 定界 (default 1); still requires
 #                         class=host + confidence=high from classify-failure.py
 #   UNIFY_SELF_EVOLVE     1 = MiniMax proposal for unify-self bugs (default 0)
+#   UNIFY_DURABLE_EVOLVE  1 = run durable-evolve each cycle (default 1)
+#   UNIFY_GIT_COMMIT      1 = commit notes/evolve-state on success (default 1)
+#   UNIFY_GIT_PUSH        1 = push after commit (default 0)
 #   UNIFY_STOP_FILE       path; if exists, exit after current cycle
 #   UNIFY_AURA_REPO       default cybrid-systems/aura
 #
@@ -39,6 +42,9 @@ STOP_FILE="${UNIFY_STOP_FILE:-$LOG_ROOT/STOP}"
 export UNIFY_AUTO_ISSUE="${UNIFY_AUTO_ISSUE:-1}"
 # Optional MiniMax proposal for Unify-owned bugs (never auto-commit).
 export UNIFY_SELF_EVOLVE="${UNIFY_SELF_EVOLVE:-0}"
+# Durable evolution (persists subject + optional git commit). Default ON.
+export UNIFY_DURABLE_EVOLVE="${UNIFY_DURABLE_EVOLVE:-1}"
+export UNIFY_GIT_COMMIT="${UNIFY_GIT_COMMIT:-1}"
 
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 RUN_DIR="$LOG_ROOT/$RUN_ID"
@@ -253,6 +259,24 @@ while true; do
     c_ok=$((c_ok + 1))
   else
     c_fail=$((c_fail + 1))
+  fi
+
+  # Durable evolve: persist subject factor ladder + git commit (real evolution)
+  if [[ "${UNIFY_DURABLE_EVOLVE}" == "1" ]]; then
+    if run_step "durable-evolve" \
+      "./scripts/durable-evolve.sh" \
+      "RESULT pass durable-evolve" \
+      "$cdir/durable-evolve.log"; then
+      c_ok=$((c_ok + 1))
+      # Surface last commit if any
+      if git log -1 --oneline 2>/dev/null | grep -q '^.*evolve:'; then
+        log "git tip: $(git log -1 --oneline)"
+      fi
+    else
+      c_fail=$((c_fail + 1))
+    fi
+  else
+    log "skip durable-evolve (UNIFY_DURABLE_EVOLVE=0)"
   fi
 
   {

@@ -69,18 +69,21 @@ Override with `AURA_BIN`, `AURA_ROOT`, `AETHER_ROOT`, etc.
 ## Quick start
 
 ```bash
-# 一键自进化（后台）
+# 一键自进化（后台）：soak + **durable evolve + git commit**
 ./scripts/start.sh
 ./scripts/start.sh status
 ./scripts/start.sh stop
+cat notes/evolve-state/state.json   # 持久化主体（generation / factor / body）
+
+# 只跑一轮落盘进化并提交
+./scripts/durable-evolve.sh
 
 # Offline smoke (no API key)
 ./scripts/run-offline.sh
-
-# Single live evolve
-source ./scripts/env-minimax.sh
-./scripts/run-aura.sh examples/02-live-evolve/main.aura
 ```
+
+**Note:** `examples/02-live-evolve` is an **in-memory** smoke (process exits → gone).
+Real accumulation is `scripts/durable-evolve.sh` → `notes/evolve-state/` + `git commit`.
 
 ### Logs (continuous)
 

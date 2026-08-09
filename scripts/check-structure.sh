@@ -27,6 +27,7 @@ required=(
   scripts/classify-failure.py
   scripts/enqueue-self-evolve.sh
   scripts/start.sh
+  scripts/durable-evolve.sh
 )
 
 echo "=== Unify structure check ==="
