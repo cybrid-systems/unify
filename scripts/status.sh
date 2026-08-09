@@ -24,7 +24,8 @@ def read_json(p: Path):
         return None
 
 def short(s, n=100):
-    s = re.sub(r"\s+", " ", (s or "").strip())
+    s = re.sub(r"[*_`#]+", "", (s or "").strip())
+    s = re.sub(r"\s+", " ", s)
     return s if len(s) <= n else s[: n - 1] + "…"
 
 def age(path: Path) -> str:
@@ -72,28 +73,28 @@ if (log_root / "STOP").is_file():
 cycle_line = ""
 if run_dir and (run_dir / "status.txt").is_file():
     cycle_line = (run_dir / "status.txt").read_text().strip()
-# parse events for "now doing"
 current = "idle / between steps"
-last_steps = []
+cycle_now = None
 if run_dir and (run_dir / "events.jsonl").is_file():
     lines = (run_dir / "events.jsonl").read_text(encoding="utf-8", errors="replace").splitlines()
-    for line in lines[-40:]:
+    for line in lines[-60:]:
         try:
             e = json.loads(line)
         except Exception:
             continue
         kind = e.get("kind")
+        if kind == "cycle_begin":
+            cycle_now = e.get("cycle")
+            current = f"cycle {cycle_now} running"
+        if kind == "cycle_end":
+            cycle_now = e.get("cycle")
+            current = f"cycle {cycle_now} done (ok={e.get('ok')} fail={e.get('fail')})"
+            if (run_dir / "status.txt").is_file():
+                cycle_line = (run_dir / "status.txt").read_text().strip()
         if kind == "step":
-            last_steps.append(e)
-            if e.get("result") in (None, ""):
-                pass
             name, res = e.get("name"), e.get("result")
             if res:
-                current = f"last step: {name} → {res}"
-        if kind == "cycle_begin":
-            current = f"cycle {e.get('cycle')} started"
-        if kind == "cycle_end":
-            current = f"cycle {e.get('cycle')} done (ok={e.get('ok')} fail={e.get('fail')})"
+                current = f"last: {name} → {res}"
     # if last event is step start only — master may be mid project-evolve
     master = run_dir / "master.log"
     if master.is_file():
