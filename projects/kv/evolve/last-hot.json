@@ -1,11 +1,11 @@
 {
-  "ts": "2026-08-09T13:08Z",
+  "ts": "2026-08-09T13:16Z",
   "mode": "alist",
   "cache": 0,
   "thr": 9999,
-  "hot_score": "5962",
-  "verify_score": "7209",
-  "applied": false,
+  "hot_score": "6032",
+  "verify_score": "8924",
+  "applied": true,
   "denseness_ok": true,
   "path": "in-process-hot"
 }
