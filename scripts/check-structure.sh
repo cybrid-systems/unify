@@ -30,6 +30,8 @@ required=(
   scripts/evolve.sh
   scripts/durable-evolve.sh
   scripts/project-evolve.sh
+  scripts/llm_controller.py
+)
   lib/unify-mutate.aura
   lib/unify-explore.aura
   notes/evolution-model.md

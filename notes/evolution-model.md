@@ -1,44 +1,80 @@
-# Unify evolution model — project-level self-evolution
+# Unify control architecture — LLM controller + Aura actuator
 
-## Intent
+## Roles
 
-Self-evolve a **software project** under a written SPEC and automated tests,
-the way you would tell an LLM: *“implement a KV database, then keep improving it.”*
+| Role | Who | When |
+|------|-----|------|
+| **Controller** | MiniMax-M3 (`scripts/llm_controller.py`) | Each project generation, **once**, after observe |
+| **Actuator** | Unify scripts + Aura runtime | Apply patch, run tests, snapshot/select, git |
+| **Plant / subject** | `projects/kv` (SPEC + lib + tests) | Continuously under test |
+| **Memory** | `evolve/state.json`, `journal.jsonl`, `last-review.md` | After accept/reject → next observe |
 
-Not: mutate one pure function forever (`(* x K)` toys).
+LLM is **not** the thing that mutates AST in-process by default for the project loop.
+It **commands** the loop: review, direction, concrete FILE patches.
 
-## Primary subject: `projects/kv`
+Aura **has** local mutation primitives (`query :find`, `mutate:rebind`, `ast:snapshot`)
+used for denseness micro-loops; the **project** loop uses file-level patches +
+Aura as the **test/execution** engine (and later denseness mutations inside modules).
 
-| Artifact | Role |
-|----------|------|
-| `SPEC.md` | Product/API roadmap (phases 0–4) |
-| `lib/kv.aura` | Implementation (grows over generations) |
-| `tests/smoke.aura` | Acceptance suite → `SCORE n/m` |
-| `evolve/state.json` | generation, best score, history |
-| `evolve/last-patch.md` | last LLM proposal |
+## When LLM is called
 
-## Loop (`scripts/project-evolve.sh`)
+Exactly **one controller call per `project-evolve` generation**:
 
 ```text
-baseline tests → SCORE b/t
-  → MiniMax reads SPEC + sources + fail tail
-  → multi-file patch (FILE path + fenced body)
-  → apply in sandbox copy of project
-  → run tests → SCORE c/t
-  → accept only if score improves (or full green)
-  → copy into projects/kv → git commit + push
+[1] OBSERVE   Aura runs tests/smoke.aura → SCORE b/t + fail tail
+[2] CONTROL   LLM ← SPEC + sources + score + journal + fail tail
+              LLM → REVIEW + DIRECTION + PATCH
+[3] ACT       sandbox copy of project; apply FILE blocks
+[4] VERIFY    Aura runs tests on sandbox → SCORE c/t
+[5] MEMORY    accept if score↑ or full-green; else reject
+              journal + last-review.md; on accept: git commit+push
+              → back to [1] on next evolve.sh cycle
 ```
 
-Continuous entry: `./scripts/evolve.sh` (default `UNIFY_PROJECT=projects/kv`).
+No LLM during offline four-span smoke, git-probe, or pure test runs.
 
-## Relation to four spans
+## Closed loop (control view)
 
-- **Offline smoke** still exercises Aether/Hephaestus/Prometheus/Hermes denseness.
-- **Project evolve** is the *product* denseness probe: long-running pure-Aura
-  software object with growing surface area — where host residuals show up as
-  real engineering friction (define-after-mutate, FS escapes for later phases).
+```text
+                 ┌──────────────────────────────────────┐
+                 │           LLM controller             │
+                 │  review · direction · patch ideas    │
+                 └──────────────┬───────────────────────┘
+                                │ PATCH (FILE blocks)
+                                ▼
+  observe ◄── tests ── Aura ── act (sandbox apply)
+     ▲                           │
+     │                           ▼
+     └────── memory ◄── accept/reject ◄── verify (Aura SCORE)
+```
+
+## Aura local transform (actuator toolkit)
+
+| Primitive | Use in loop |
+|-----------|-------------|
+| Run `tests/smoke.aura` | Observe / verify fitness |
+| File sandbox + copy | Actuator for project-level edits |
+| `(query :find)` / `mutate:rebind` / `ast:snapshot` | Optional denseness sub-loop inside modules |
+| `write-file` etc. | Later KV persistence phases (metered E) |
+
+## Artifacts per generation
+
+| Path | Content |
+|------|---------|
+| `evolve/last-observe.log` | Test output before control |
+| `evolve/last-control.json` | Parsed review / direction / patch |
+| `evolve/last-review.md` | Human/agent readable review |
+| `evolve/last-patch.md` | Raw controller output |
+| `evolve/journal.jsonl` | Accepted/rejected memory for next control |
+
+## Entry
+
+```bash
+./scripts/evolve.sh                      # continuous closed loop
+./scripts/project-evolve.sh projects/kv  # one generation
+```
 
 ## Legacy
 
-`scripts/durable-evolve.sh` four-axis pure functions remain available via
-`UNIFY_DURABLE_EVOLVE=1` but are **off by default**.
+Function-axis denseness explore (`durable-evolve.sh`) is optional
+(`UNIFY_DURABLE_EVOLVE=1`); not the primary product controller loop.

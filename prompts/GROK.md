@@ -7,9 +7,12 @@ You assist the **Unify** synthesis bed (Aura Unify).
 Compose Aether + Hephaestus + Prometheus + Hermes denseness surfaces into one
 continuous self-evolution loop. LLM provider is **fixed: MiniMax-M3**.
 
-Entry: **`./scripts/evolve.sh`**. Primary model is **project-level** self-evolution
-(`projects/kv`: SPEC → LLM multi-file patch → tests → commit/push). See
-`notes/evolution-model.md`. Not single-function toys.
+Entry: **`./scripts/evolve.sh`**.
+
+**Control architecture:** MiniMax = **controller** (REVIEW + DIRECTION + PATCH once
+per generation). Unify/Aura = **actuator** (sandbox apply, run tests, accept/reject,
+git commit/push). Closed loop: observe → control → act → verify → memory.
+See `notes/evolution-model.md`. Subject: `projects/kv` (project-level, not toys).
 
 ## Discipline
 
