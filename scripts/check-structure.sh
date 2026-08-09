@@ -35,12 +35,14 @@ required=(
   scripts/kv-load.sh
   scripts/kv-squeeze.sh
   scripts/aura-hot.sh
+  scripts/aura-resident.sh
   scripts/llm_controller.py
   projects/kv/tests/fiber-stress.aura
   projects/kv/tests/load-sim.aura
   projects/kv/tests/policy-bench.aura
   projects/kv/tests/hot-squeeze.aura
   projects/kv/tests/hot-denseness.aura
+  projects/kv/tests/resident-loop.aura
   projects/kv/lib/kv-engine.aura
   lib/unify-mutate.aura
   lib/unify-explore.aura

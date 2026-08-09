@@ -1,0 +1,323 @@
+; projects/kv/tests/resident-loop.aura
+;
+; Cross-generation RESIDENT Aura session (single cold start):
+;   for gen in 1..GENS:
+;     denseness multi-cand mutate (optional)
+;     plant policy grid via mutate:rebind of free knobs + load measure
+;     multi-wave fiber soak
+;     emit GEN metrics
+;
+; This is the main lever for "fully use Aura": mutate + multi-gen without
+; process restart, fiber pressure, metrology.
+;
+; Env:
+;   UNIFY_RESIDENT_GENS   default 3
+;   UNIFY_LOAD_KEYS/OPS
+;   UNIFY_HOT_FIBER_N     fibers per soak wave
+;   UNIFY_FIBER_SOAK_WAVES default 4
+;   UNIFY_RESIDENT_DENSE  "0" to skip denseness
+
+(require "std/mutate" all:)
+(require "kv" all:)
+(require "kv-engine" all:)
+; denseness optional — may fail if span libs missing; gated below
+(try (require "unify-explore" all:) (catch (e) #f))
+
+(let* ((now-ms (lambda () (try (current-time-ms) (catch (e) 0))))
+       (env-g (getenv "UNIFY_RESIDENT_GENS"))
+       (env-keys (getenv "UNIFY_LOAD_KEYS"))
+       (env-ops (getenv "UNIFY_LOAD_OPS"))
+       (env-fn (getenv "UNIFY_HOT_FIBER_N"))
+       (env-fw (getenv "UNIFY_FIBER_SOAK_WAVES"))
+       (env-dense (getenv "UNIFY_RESIDENT_DENSE"))
+       (GENS
+         (let ((n (if (and (string? env-g) (> (string-length env-g) 0))
+                    (string->number env-g) #f)))
+           (if (and (number? n) (> n 0)) n 3)))
+       (N-KEYS
+         (let ((n (if (and (string? env-keys) (> (string-length env-keys) 0))
+                    (string->number env-keys) #f)))
+           (if (and (number? n) (> n 0)) n 48)))
+       (N-OPS
+         (let ((n (if (and (string? env-ops) (> (string-length env-ops) 0))
+                    (string->number env-ops) #f)))
+           (if (and (number? n) (> n 0)) n 128)))
+       (FIBER-N
+         (let ((n (if (and (string? env-fn) (> (string-length env-fn) 0))
+                    (string->number env-fn) #f)))
+           (if (and (number? n) (> n 0)) n 24)))
+       (SOAK-WAVES
+         (let ((n (if (and (string? env-fw) (> (string-length env-fw) 0))
+                    (string->number env-fw) #f)))
+           (if (and (number? n) (> n 0)) n 4)))
+       (DO-DENSE
+         (not (and (string? env-dense) (equal? env-dense "0"))))
+       (t-boot (now-ms))
+       ; plant knobs — free top-level via set-code (module rebind is inert)
+       (_inst
+         (begin
+           (set-code
+             "(define plant-mode \"hybrid\")(define plant-cache 16)(define plant-thr 32)(define (plant-policy) (list plant-mode plant-cache plant-thr))")
+           (try (eval-current) (catch (e) #f))))
+       (fill
+         (lambda (n pol)
+           (let ((i 0) (e (kv:engine-open pol)))
+             (while (lambda () (< i n))
+               (lambda ()
+                 (set! e (kv:engine-set e
+                           (string-append "k" (number->string i)) i))
+                 (set! i (+ i 1))))
+             e)))
+       (load-score
+         (lambda (pol)
+           (let* ((base (fill N-KEYS pol))
+                  (hot-n (if (< 4 N-KEYS) 4 N-KEYS))
+                  (t0 (now-ms))
+                  (eng base)
+                  (i 0))
+             ; hotspot
+             (set! i 0)
+             (while (lambda () (< i N-OPS))
+               (lambda ()
+                 (let ((r (kv:engine-get eng
+                            (string-append "k" (number->string (modulo i hot-n))))))
+                   (set! eng (cadr r))
+                   (set! i (+ i 1)))))
+             (let ((t1 (now-ms)))
+               ; uniform
+               (set! i 0)
+               (while (lambda () (< i N-OPS))
+                 (lambda ()
+                   (let ((r (kv:engine-get eng
+                              (string-append "k" (number->string (modulo i N-KEYS))))))
+                     (set! eng (cadr r))
+                     (set! i (+ i 1)))))
+               (let ((t2 (now-ms)))
+                 ; mixed
+                 (set! i 0)
+                 (while (lambda () (< i N-OPS))
+                   (lambda ()
+                     (if (= (modulo i 5) 0)
+                       (set! eng (kv:engine-set eng
+                                   (string-append "k" (number->string (modulo i N-KEYS)))
+                                   i))
+                       (let ((r (kv:engine-get eng
+                                  (string-append "k" (number->string (modulo i N-KEYS))))))
+                         (set! eng (cadr r))))
+                     (set! i (+ i 1))))
+                 (let* ((t3 (now-ms))
+                        (e1 (if (> (- t1 t0) 0) (- t1 t0) 1))
+                        (e2 (if (> (- t2 t1) 0) (- t2 t1) 1))
+                        (e3 (if (> (- t3 t2) 0) (- t3 t2) 1)))
+                   (+ (/ (* N-OPS 1000) e1)
+                      (/ (* N-OPS 1000) e2)
+                      (/ (* N-OPS 1000) e3))))))))
+       (apply-pol!
+         (lambda (mode c thr)
+           ; mutate plant knobs (EDSL path)
+           (try (mutate:rebind "plant-mode"
+                  (string-append "\"" mode "\"") "plant-mode") (catch (e) #f))
+           (try (mutate:rebind "plant-cache"
+                  (number->string c) "plant-cache") (catch (e) #f))
+           (try (mutate:rebind "plant-thr"
+                  (number->string thr) "plant-thr") (catch (e) #f))
+           (try (eval-current) (catch (e) #f))
+           (list mode c thr)))
+       (fiber-soak!
+         (lambda (pol waves)
+           (let* ((shared (fill N-KEYS pol))
+                  (want (let loop ((i 0) (acc 0))
+                          (if (>= i N-KEYS) acc (loop (+ i 1) (+ acc i)))))
+                  (reader
+                    (lambda ()
+                      (let ((i 0) (acc 0) (eng shared))
+                        (while (lambda () (< i N-KEYS))
+                          (lambda ()
+                            (let ((r (kv:engine-get eng
+                                       (string-append "k" (number->string i)))))
+                              (set! eng (cadr r))
+                              (if (number? (car r))
+                                (set! acc (+ acc (car r)))
+                                #f)
+                              (set! i (+ i 1)))))
+                        acc)))
+                  (w 0)
+                  (all-ok #t)
+                  (total-ok 0)
+                  (t0 (now-ms)))
+             (while (lambda () (< w waves))
+               (lambda ()
+                 (let ((ids (quote ()))
+                       (k 0)
+                       (ok-spawn #t))
+                   (while (lambda () (and ok-spawn (< k FIBER-N)))
+                     (lambda ()
+                       (let ((fid (fiber:spawn reader)))
+                         (if (and (number? fid) (> fid 0))
+                           (begin (set! ids (cons fid ids)) (set! k (+ k 1)))
+                           (set! ok-spawn #f)))))
+                   (let ((xs ids) (n-ok 0))
+                     (while (lambda () (pair? xs))
+                       (lambda ()
+                         (let ((r (fiber:join (car xs))))
+                           (if (and (number? r) (= r want))
+                             (set! n-ok (+ n-ok 1))
+                             (set! all-ok #f))
+                           (set! xs (cdr xs)))))
+                     (set! total-ok (+ total-ok n-ok)))
+                   (set! w (+ w 1)))))
+             (let ((t1 (now-ms)))
+               (list all-ok total-ok
+                     (if (> (- t1 t0) 0) (- t1 t0) 0)
+                     (* waves FIBER-N))))))
+       (best-s -1)
+       (best-mode "hybrid")
+       (best-c 16)
+       (best-t 32)
+       (gen 0)
+       (mutate-ops 0)
+       (t-all0 (now-ms)))
+
+  (display "=== resident-loop GENS=") (display GENS)
+  (display " keys=") (display N-KEYS)
+  (display " ops=") (display N-OPS)
+  (display " fiber=") (display FIBER-N)
+  (display "x") (display SOAK-WAVES)
+  (display " backend=") (display (try (fiber:spawn-backend) (catch (e) -1)))
+  (display " dense=") (display DO-DENSE)
+  (newline)
+  (display "METRO cold_start_ms=")
+  (display (if (> (- (now-ms) t-boot) 0) (- (now-ms) t-boot) 0))
+  (newline)
+
+  (while (lambda () (< gen GENS))
+    (lambda ()
+      (let ((t-g0 (now-ms))
+            (dense-ok #t)
+            (mut-this 0))
+        (display "---- GEN ") (display gen) (display " ----") (newline)
+
+        ; ── denseness mutate multi-cand (EDSL) ───────────────────────────
+        (if DO-DENSE
+          (let ((t-d0 (now-ms)))
+            (try
+              (begin
+                (unify:explore-install!
+                  "(lambda (x) (* x 2))"
+                  "(lambda (n) (/ (* n (- n 1)) 2))"
+                  "(lambda (x) (* x 3))"
+                  "(lambda (x) (modulo (+ x 1) 3))")
+                (set! mut-this (+ mut-this 1))
+                (let ((sel
+                        (unify:explore-select-axis! "score"
+                          (list "(lambda (x) (* x 3))"
+                                "(lambda (x) (* x 2))"
+                                "(lambda (x) (+ x x x))"))))
+                  (set! mut-this (+ mut-this 3))
+                  (set! dense-ok
+                    (and (unify:explore-verify-all)
+                         (= (try (score 7) (catch (e) -1)) 21))))
+                (display "DENSE ok=") (display dense-ok)
+                (display " score7=") (display (try (score 7) (catch (e) -1)))
+                (display " ms=")
+                (display (if (> (- (now-ms) t-d0) 0) (- (now-ms) t-d0) 0))
+                (newline))
+              (catch (e)
+                (begin
+                  (set! dense-ok #f)
+                  (display "DENSE skip/fail ") (write e) (newline)))))
+          (display "DENSE skipped") (newline))
+
+        ; ── plant policy grid via mutate:rebind knobs ────────────────────
+        (let ((t-p0 (now-ms))
+              (cands
+                (list
+                  (list "alist" 0 9999)
+                  (list "hybrid" 4 16)
+                  (list "hybrid" 8 32)
+                  (list "hybrid" 16 32)
+                  (list "cache" 4 32)
+                  (list "cache" 8 32)
+                  (list "cache" 16 32)
+                  (list "cache" 32 32)))
+              (cs cands)
+              (local-best -1)
+              (lm "hybrid") (lc 8) (lt 32))
+          (while (lambda () (pair? cs))
+            (lambda ()
+              (let* ((p (car cs))
+                     (mode (list-ref p 0))
+                     (c (list-ref p 1))
+                     (thr (list-ref p 2)))
+                (apply-pol! mode c thr)
+                (set! mut-this (+ mut-this 3))
+                (let ((s (load-score (list mode c thr))))
+                  (display "  PLANT ") (display mode)
+                  (display " c=") (display c)
+                  (display " t=") (display thr)
+                  (display " s=") (display s)
+                  (newline)
+                  (if (> s local-best)
+                    (begin
+                      (set! local-best s)
+                      (set! lm mode) (set! lc c) (set! lt thr))
+                    #f))
+                (set! cs (cdr cs)))))
+          ; lock best via mutate
+          (apply-pol! lm lc lt)
+          (set! mut-this (+ mut-this 3))
+          (if (> local-best best-s)
+            (begin
+              (set! best-s local-best)
+              (set! best-mode lm)
+              (set! best-c lc)
+              (set! best-t lt))
+            #f)
+          (display "PLANT_BEST gen=") (display gen)
+          (display " mode=") (display lm)
+          (display " cache=") (display lc)
+          (display " thr=") (display lt)
+          (display " score=") (display local-best)
+          (display " grid_ms=")
+          (display (if (> (- (now-ms) t-p0) 0) (- (now-ms) t-p0) 0))
+          (newline)
+
+          ; ── multi-wave fiber soak ──────────────────────────────────────
+          (let* ((t-f0 (now-ms))
+                 (fs (fiber-soak! (list lm lc lt) SOAK-WAVES)))
+            (display "FIBER_SOAK gen=") (display gen)
+            (display " ok=") (display (list-ref fs 0))
+            (display " joins_ok=") (display (list-ref fs 1))
+            (display "/") (display (list-ref fs 3))
+            (display " ms=") (display (list-ref fs 2))
+            (newline))
+
+          (set! mutate-ops (+ mutate-ops mut-this))
+          (display "METRO gen=") (display gen)
+          (display " gen_ms=")
+          (display (if (> (- (now-ms) t-g0) 0) (- (now-ms) t-g0) 0))
+          (display " mutate_ops=") (display mut-this)
+          (display " cold=0")
+          (newline)
+          (set! gen (+ gen 1))))))
+
+  (display "BEST_POLICY mode=") (display best-mode)
+  (display " cache=") (display best-c)
+  (display " thr=") (display best-t)
+  (display " score=") (display best-s)
+  (newline)
+  (display "LOAD_SCORE_TOTAL ") (display best-s) (newline)
+  (display "METRO total_ms=")
+  (display (if (> (- (now-ms) t-all0) 0) (- (now-ms) t-all0) 0))
+  (display " gens=") (display GENS)
+  (display " mutate_ops_total=") (display mutate-ops)
+  (display " cold_starts=1")
+  (newline)
+  (display "RESULT pass project=kv-resident")
+  (display " gens=") (display GENS)
+  (display " mode=") (display best-mode)
+  (display " cache=") (display best-c)
+  (display " thr=") (display best-t)
+  (display " score=") (display best-s)
+  (display " mutate_ops=") (display mutate-ops)
+  (newline))

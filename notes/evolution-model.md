@@ -45,19 +45,26 @@ Also each `run-continuous` cycle:
 | **squeeze** | **parallel local policy grid + multi-worker CPU burn (no LLM)** |
 | project-evolve | LLM every `UNIFY_LLM_EVERY` cycles; **skipped** if squeeze just gained |
 
-### Aura-hot (primary — in-process, EDSL)
+### Resident multi-gen (primary — full Aura leverage)
 
 ```bash
-./scripts/aura-hot.sh
+UNIFY_RESIDENT_GENS=3 ./scripts/aura-resident.sh
 ```
 
 | Phase | Aura surface |
 |-------|----------------|
-| denseness | `mutate:rebind` + `ast:snapshot` multi-cand (`hot-denseness.aura`) |
-| policy grid | **one process**, all policies (`hot-squeeze.aura`) — no per-cell cold start |
-| fiber soak | flat `fiber:spawn`/`join` on best policy |
-| burn | optional multi-process `load-sim` farm |
-| accept | verify load_score ≥ baseline + smoke; patch `kv:_default-policy` |
+| **one cold start** | entire GENS loop in single process |
+| denseness | `mutate:rebind` multi-cand per gen |
+| plant | free knobs via `set-code` + **`mutate:rebind` plant-mode/cache/thr** + load measure |
+| fiber | multi-wave flat soak (`UNIFY_FIBER_SOAK_WAVES`) |
+| metrology | `METRO cold_start_ms / gen_ms / mutate_ops / cold=0` |
+| persist | best policy written to `kv-engine` after verify |
+
+### Aura-hot (optional single-gen)
+
+```bash
+./scripts/aura-hot.sh
+```
 
 ### Multi-process squeeze (optional CPU farm)
 

@@ -24,8 +24,10 @@
 #   UNIFY_FIBER_WAVES     sustained multi-wave fanout rounds (default 4)
 #   UNIFY_FIBER_BATCH     live concurrent thread cap per fanout (default 16; 0=unlimited)
 #   UNIFY_LOAD_SIM        1 = standalone load-sim each cycle (default 1)
-#   UNIFY_AURA_HOT        1 = in-process denseness mutate + hot-squeeze (default 1)
-#   UNIFY_SQUEEZE         1 = multi-process policy grid (default 0 if hot on)
+#   UNIFY_AURA_RESIDENT   1 = multi-gen single-process mutate+fiber (default 1)
+#   UNIFY_RESIDENT_GENS   generations per resident process (default 3)
+#   UNIFY_AURA_HOT        1 = single-gen denseness+hot-squeeze (default 0 if resident)
+#   UNIFY_SQUEEZE         1 = multi-process policy grid (default 0)
 #   UNIFY_SQUEEZE_JOBS    parallel aura workers for burn/mp grid
 #   UNIFY_LLM_EVERY       run LLM project-evolve every N cycles (default 3);
 #                         skipped when hot/squeeze just improved policy
@@ -72,20 +74,21 @@ export UNIFY_FIBER_KEYS="${UNIFY_FIBER_KEYS:-128}"
 export UNIFY_FIBER_WAVES="${UNIFY_FIBER_WAVES:-4}"
 export UNIFY_FIBER_BATCH="${UNIFY_FIBER_BATCH:-16}"
 export UNIFY_LOAD_SIM="${UNIFY_LOAD_SIM:-1}"
-export UNIFY_AURA_HOT="${UNIFY_AURA_HOT:-1}"
-# multi-process grid optional; hot path is default (in-process = real Aura leverage)
+export UNIFY_AURA_RESIDENT="${UNIFY_AURA_RESIDENT:-1}"
+export UNIFY_RESIDENT_GENS="${UNIFY_RESIDENT_GENS:-3}"
+export UNIFY_FIBER_SOAK_WAVES="${UNIFY_FIBER_SOAK_WAVES:-4}"
+export UNIFY_AURA_HOT="${UNIFY_AURA_HOT:-0}"
 export UNIFY_SQUEEZE="${UNIFY_SQUEEZE:-0}"
 export UNIFY_SQUEEZE_JOBS="${UNIFY_SQUEEZE_JOBS:-0}"
-export UNIFY_LLM_EVERY="${UNIFY_LLM_EVERY:-3}"
+export UNIFY_LLM_EVERY="${UNIFY_LLM_EVERY:-4}"
 export UNIFY_LOAD_KEYS="${UNIFY_LOAD_KEYS:-64}"
 export UNIFY_LOAD_OPS="${UNIFY_LOAD_OPS:-256}"
 export UNIFY_HOT_FIBER_N="${UNIFY_HOT_FIBER_N:-24}"
 export AURA_BIN="${AURA_BIN:-$ROOT/../aura-grok/build/aura}"
 export AURA_SANDBOX="${AURA_SANDBOX:-off}"
-# tighter sleep when hot/squeeze (CPU-bound loop)
-if [[ "${UNIFY_AURA_HOT}" == "1" || "${UNIFY_SQUEEZE}" == "1" ]]; then
+if [[ "${UNIFY_AURA_RESIDENT}" == "1" || "${UNIFY_AURA_HOT}" == "1" || "${UNIFY_SQUEEZE}" == "1" ]]; then
   if [[ -z "${UNIFY_SLEEP_SEC:-}" ]]; then
-    SLEEP_SEC=10
+    SLEEP_SEC=8
   fi
 fi
 
@@ -336,8 +339,31 @@ while true; do
     fi
   fi
 
-  # Aura-native hot path: denseness mutate:rebind + in-process policy grid + fiber soak
+  # Primary: multi-gen RESIDENT Aura (mutate denseness+plant, fiber waves, 1 cold start)
   hot_gain=0
+  if [[ "${UNIFY_AURA_RESIDENT}" == "1" ]]; then
+    if run_step "aura-resident" \
+      "./scripts/aura-resident.sh" \
+      "RESULT pass aura-resident" \
+      "$cdir/aura-resident.log"; then
+      c_ok=$((c_ok + 1))
+      if grep -q 'improved=1' "$cdir/aura-resident.log"; then
+        hot_gain=1
+        log "resident GAIN — multi-gen mutate+fiber (LLM may skip)"
+      fi
+      if grep -qE 'mutate_ops=' "$cdir/aura-resident.log"; then
+        log "resident $(grep -oE 'mutate_ops=[0-9]+' "$cdir/aura-resident.log" | tail -1) $(grep -oE 'cold_starts=[0-9]+' "$cdir/aura-resident.log" | tail -1)"
+      fi
+      if git log -1 --oneline 2>/dev/null | grep -qE 'resident|aura-hot|squeeze'; then
+        log "git tip: $(git log -1 --oneline)"
+      fi
+    else
+      log "WARN aura-resident soft-fail"
+      c_fail=$((c_fail + 1))
+    fi
+  fi
+
+  # Optional single-gen hot path (legacy/light)
   if [[ "${UNIFY_AURA_HOT}" == "1" ]]; then
     if run_step "aura-hot" \
       "./scripts/aura-hot.sh" \
@@ -346,17 +372,12 @@ while true; do
       c_ok=$((c_ok + 1))
       if grep -q 'improved=1' "$cdir/aura-hot.log"; then
         hot_gain=1
-        log "aura-hot GAIN — denseness+policy (LLM may skip)"
-      fi
-      if git log -1 --oneline 2>/dev/null | grep -qE 'aura-hot|squeeze policy'; then
-        log "git tip: $(git log -1 --oneline)"
+        log "aura-hot GAIN"
       fi
     else
       log "WARN aura-hot soft-fail"
       c_fail=$((c_fail + 1))
     fi
-  else
-    log "skip aura-hot (UNIFY_AURA_HOT=0)"
   fi
 
   # Optional multi-process squeeze (extra CPU farm; hot path is primary)

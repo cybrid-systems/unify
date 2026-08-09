@@ -1,18 +1,17 @@
 # Controller REVIEW
 
-- **Correctness**: 148/148 full-green across Phases 0–16. Pure Aura alist-of-cons store, defensive skip of stray non-pair cells, insertion order preserved by every op, no FS / network / host escape. Engine v3 (no promotion-on-hit) is locked in.
-- **Load metrics (baseline 9002)** — current load-sim uses ONE shared `base` with default policy `alist` for all four profiles:
-  - `uniform-read`: 1920 ops/s, 0% hits, mode=alist — **correct** (uniform rotation can't hit a cache, alist avoids the walk overhead)
-  - `hotspot-read`: 3200 ops/s, 0% hits, mode=alist — **mis-tuned** (this is the obvious loss; hotspot reads cycle through 4 keys, cap=4 hybrid would hit 92/96, L5 confirms the structure works with `hybrid cap=24`)
-  - `write-heavy`: 2000 ops/s, 0% hits, mode=alist — **correct** (no reads, cache_put is pure overhead)
-  - `mixed`: 1882 ops/s, 0% hits, mode=alist — **correct** (rotating reads across 32 keys never repeat, cache thrashes, alist is faster)
-- **Single biggest loss**: hotspot-profile alist overhead. Each read is a full 32-cell body walk; with v3 engine + hybrid cap=4, the cache HIT path is ~4 cell ops and 92/96 reads would hit. Expected jump: hotspot from ~3200 → ~10000 ops/s, plus hit_rate ≈ 95.8. Net total target ≈ **~12500–14000**.
-- **Risk**: load-sim cache-hit-rate math must stay consistent (L5 already proves hybrid cap=24 → 92 hits with 96 ops, cap=4 gives the same shape). The L2 `cache-or-alist` invariant test must be updated — hotspot is now explicitly hybrid so it must hit (not "0 or >0").
+- **Correctness floor**: smoke 148/148 full-green across Phases 0–16. Pure Aura alist-of-cons store, defensive skip of stray non-pair cells, insertion order preserved by every op. API surface stable since v1.
+- **Load fitness (baseline 7547)**:
+  - uniform-read 1655 ops/s · hotspot-read 2742 ops/s · write-heavy 1523 ops/s · mixed 1627 ops/s
+  - All four profiles run under the engine's **default alist policy** (L5/L6 are explicit hybrid/alist TUNE correctness gates and don't feed load_score). Per-profile policy tuning (gen 19) and HIT-skip cache_put (gen 20) are already optimal at the policy layer.
+  - **Bottleneck**: body walk dominates. `kv:get` / `kv:set` / `kv:del` are implemented as **recursive** alist walks (`kv:_ref` / `kv:_set` / `kv:_del`). Each recursive step costs a frame in addition to the cell ops, and Aura's host tail-call behavior is uncertain — the engine's `kv:_cache-lookup` already uses `while`/`set!` and works fine, so a while-loop body walker is known-good.
+  - The v2/v3 engine-get path still pays for `index` / `cache` field accesses and a `use-c` / `found` / `ncache` computation in alist mode where they're all unreachable.
+- **Risk**: introducing engine-local primitives (`_ref-loop` / `_set-loop` / `_del-loop` / `_has-loop` / `_rev-loop`) must preserve smoke semantics exactly — same insertion-order on overwrite and append, same `#f` on miss, same defensive skip of non-pair cells. All five helpers are pure `while`/`set!` translations of the existing recursive primitives — the trace checks out for found-at-head, found-at-tail, found-in-middle, not-found, and delete cases.
 
 # DIRECTION
 
-- **Surgical patch on `tests/load-sim.aura` only** — introduce a separate `base-hot` filled with `(list "hybrid" 4 9999)` and route the `hotspot-reads` profile through it. Keep `uniform-read` / `write-heavy` / `mixed` on the alist default (those access patterns do not benefit from cache, alist strictly wins there).
-- No engine changes; engine=v3 stays. `kv:engine-version` stays at 3.
-- Update the `L2-hotspot-cache-or-alist` invariant to `L2-hotspot-hybrid-hits` (> 0 hits), since hotspot now has an explicit hybrid policy.
-- Update the `DEFAULT_POLICY` diagnostic to show both modes (uniform/write-heavy/mixed stay alist; hotspot is hybrid).
-- **What NOT to touch**: Phases 0–16 of `lib/kv.aura`, `lib/kv-engine.aura` (no engine rewrites), smoke API surface, `kv:engine-version` bump.
+- **Single targeted patch on `lib/kv-engine.aura`**: add engine-local while-loop body primitives (`_ref-loop`, `_has-loop`, `_set-loop`, `_del-loop`, `_rev-loop`) and have `engine-get` / `engine-set` / `engine-del` / `engine-has?` route through them instead of the recursive `kv:get` / `kv:set` / `kv:del` / `kv:has?`. Engine's public smoke contract is unchanged because the underlying alist shape is identical.
+- Add a **mode-dispatched fast path** in `engine-get`: when `mode` is not `cache`/`hybrid` (i.e., the default alist mode that all four load-sim profiles actually exercise), skip the `index` field access, the `cache` field access, the `use-c` computation, and the unreachable `found` / `ncache` bindings. One `kv:_ref-loop` body walk + one stats bump + one `mk-eng` — that's the whole hot path.
+- Cache/hybrid path stays exactly as in v2/v3 (HIT still skips cache_put promotion; MISS still does `_ref-loop` + optional cache_put). The hybrid branch keeps the v3 win.
+- **Bump** `kv:engine-version` 3 → 4 and update the header comment.
+- **Do NOT touch** `lib/kv.aura`, `tests/load-sim.aura`, or `tests/smoke.aura`. Public API surface untouched; load-sim already wires through `kv:engine-version` so the new version number appears automatically.
