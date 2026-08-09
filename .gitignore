@@ -2,6 +2,7 @@
 /tmp/
 logs/
 notes/issue-drafts/*.md
+notes/issue-drafts/*.json
 !notes/issue-drafts/.gitkeep
 notes/issue-drafts/*.url
 .env

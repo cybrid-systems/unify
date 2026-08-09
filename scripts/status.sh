@@ -52,3 +52,14 @@ if [[ -f "$LOG_ROOT/STOP" ]]; then
   echo
   echo "NOTE: STOP file present at $LOG_ROOT/STOP"
 fi
+
+echo
+echo "--- recent Aura issue filings (drafts with .url) ---"
+draft_dir="$ROOT/notes/issue-drafts"
+if compgen -G "$draft_dir"/*.url >/dev/null 2>&1; then
+  for u in "$draft_dir"/*.url; do
+    echo "  $(basename "$u" .url): $(cat "$u")"
+  done
+else
+  echo "(none yet)"
+fi

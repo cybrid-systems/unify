@@ -24,6 +24,7 @@ required=(
   scripts/overnight.sh
   scripts/run-continuous.sh
   scripts/status.sh
+  scripts/classify-failure.py
 )
 
 echo "=== Unify structure check ==="

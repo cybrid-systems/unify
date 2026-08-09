@@ -22,4 +22,5 @@ continuous self-evolution loop. LLM provider is **fixed: MiniMax-M3**.
 - Live propose must stay schema-gated; refuse garbage LLM output.
 - Offline suite must stay green without network.
 - Prefer Aura `git-*` prims (`unify-host`) over shell git; meter as \(E\).
-- File Aura issues only for class=`host`; use `scripts/file-aura-issue.sh` + `~/.github-token`.
+- On failure: `classify-failure.py` → `file-aura-issue.sh --log` (host only → cybrid-systems/aura).
+- Continuous defaults `UNIFY_AUTO_ISSUE=1` for host; denseness/llm never hit the Aura tracker.

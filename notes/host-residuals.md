@@ -11,5 +11,11 @@ Packaging / host / stdlib issues — **not** denseness failures of the four span
 
 ## Auto-issue
 
-See `scripts/file-aura-issue.sh` (loads `~/.github-token`; `gh` or curl).
-Drafts land in `notes/issue-drafts/`. Set `UNIFY_AUTO_ISSUE=1` to post.
+Pipeline:
+
+1. `scripts/classify-failure.py --log …` → class / kind / stable fingerprint / detailed body
+2. `scripts/file-aura-issue.sh --log …` → draft + dedupe search + create on `cybrid-systems/aura`
+3. Continuous runner defaults `UNIFY_AUTO_ISSUE=1` for **host** only
+
+Drafts/meta: `notes/issue-drafts/<fingerprint>.md` + `.json` + `.url` (gitignored).
+Auth: `~/.github-token` or `GH_TOKEN`.

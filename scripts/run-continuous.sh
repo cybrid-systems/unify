@@ -13,8 +13,10 @@
 #   UNIFY_MAX_CYCLES      0 = forever (default 0)
 #   UNIFY_OFFLINE_EVERY   run full offline every K cycles (default 1)
 #   UNIFY_LOG_ROOT        log root (default: <repo>/logs/runs)
-#   UNIFY_AUTO_ISSUE      1 to post host issues (default 0)
+#   UNIFY_AUTO_ISSUE      post host issues to cybrid-systems/aura
+#                         (default 1 for continuous; denseness/llm never filed)
 #   UNIFY_STOP_FILE       path; if exists, exit after current cycle
+#   UNIFY_AURA_REPO       default cybrid-systems/aura
 #
 # Locate problems:
 #   tail -f logs/runs/latest/master.log
@@ -32,7 +34,8 @@ MAX_CYCLES="${UNIFY_MAX_CYCLES:-0}"
 OFFLINE_EVERY="${UNIFY_OFFLINE_EVERY:-1}"
 LOG_ROOT="${UNIFY_LOG_ROOT:-$ROOT/logs/runs}"
 STOP_FILE="${UNIFY_STOP_FILE:-$LOG_ROOT/STOP}"
-HOST_RE="${UNIFY_HOST_RE:-unbound variable|recursion depth exceeded|SIGSEGV|internal error|segmentation|eval_flat|type error: cannot call}"
+# Continuous defaults to auto-filing host residuals (detailed body + dedupe).
+export UNIFY_AUTO_ISSUE="${UNIFY_AUTO_ISSUE:-1}"
 
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 RUN_DIR="$LOG_ROOT/$RUN_ID"
@@ -114,41 +117,38 @@ total_fail=0
 total_host=0
 cycle=0
 
-maybe_file_host() {
+# On any step failure: classify log → detailed draft → file host to Aura.
+file_failure() {
   local label="$1"
   local logf="$2"
-  local fp="$3"
-  if ! grep -qE "$HOST_RE" "$logf" 2>/dev/null; then
-    return 0
-  fi
-  total_host=$((total_host + 1))
-  local body="$RUN_DIR/failures/body-$fp.md"
-  {
-    echo "## Summary"
-    echo
-    echo "Unify continuous run \`$RUN_ID\` step \`$label\` hit a host-like error."
-    echo
-    echo "## Repro"
-    echo
-    echo '```bash'
-    echo "cd $ROOT"
-    echo "source ./scripts/env-minimax.sh   # if live"
-    echo "# see log: $logf"
-    echo '```'
-    echo
-    echo "## Log tail"
-    echo
-    echo '```'
-    tail -n 100 "$logf" || true
-    echo '```'
-  } >"$body"
-  cp -f "$logf" "$RUN_DIR/failures/${fp}.log" 2>/dev/null || true
+  local cmd="$3"
+  local fail_copy="$RUN_DIR/failures/cycle$(printf '%04d' "$cycle")-${label}.log"
+  cp -f "$logf" "$fail_copy" 2>/dev/null || true
+
+  local out class fp url=""
+  out="$(mktemp)"
+  set +e
   ./scripts/file-aura-issue.sh \
-    --title "[Unify] host residual: $label" \
-    --class host \
-    --fingerprint "$fp" \
-    --body-file "$body" >>"$MASTER" 2>&1 || true
-  event host_flag label "$label" fingerprint "$fp" log "$logf"
+    --log "$logf" \
+    --label "c${cycle}-${label}" \
+    --cmd "$cmd" \
+    --notes "Continuous run_id=\`$RUN_ID\` cycle=$cycle step=\`$label\`. See also \`$fail_copy\`." \
+    >"$out" 2>&1
+  local frc=$?
+  set -e
+  cat "$out" | while IFS= read -r line; do log "  issue| $line"; done || true
+
+  class="$(grep -E '^class=' "$out" | tail -n1 | sed 's/^class=//;s/ fingerprint=.*//')" || class=""
+  fp="$(grep -E 'fingerprint=' "$out" | tail -n1 | sed 's/.*fingerprint=//;s/ title=.*//')" || fp=""
+  url="$(grep -E '^(created|skip):' "$out" | tail -n1 | sed 's/^created: //;s/^skip: already filed //;s/^skip: open\/existing issue //;s/^skip: meta has url //')" || url=""
+
+  if [[ "$class" == "host" ]]; then
+    total_host=$((total_host + 1))
+    event host_flag label "$label" fingerprint "$fp" url "$url" rc "$frc"
+  else
+    event fail_classified label "$label" class "${class:-unknown}" fingerprint "$fp" rc "$frc"
+  fi
+  rm -f "$out"
 }
 
 run_step() {
@@ -171,13 +171,11 @@ run_step() {
     total_ok=$((total_ok + 1))
   else
     total_fail=$((total_fail + 1))
-    cp -f "$logf" "$RUN_DIR/failures/cycle$(printf '%04d' "$cycle")-${name}.log" 2>/dev/null || true
-    maybe_file_host "c${cycle}-${name}" "$logf" \
-      "cont-$(date -u +%Y%m%d)-c$(printf '%04d' "$cycle")-${name}"
+    log "STEP fail name=$name → classify + maybe file Aura issue"
+    file_failure "$name" "$logf" "$cmd"
   fi
   event step name "$name" result "$result" rc "$rc" dur_s "$dur" log "$logf"
   log "STEP end name=$name result=$result rc=$rc dur=${dur}s"
-  # Keep last lines of failures visible in master
   if [[ "$result" != "pass" ]]; then
     log "--- tail $name ---"
     tail -n 20 "$logf" | while IFS= read -r line; do log "  | $line"; done || true
