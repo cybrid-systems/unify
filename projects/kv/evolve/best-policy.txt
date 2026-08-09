@@ -1,1 +1,1 @@
-mode=alist cache=0 thr=9999 score=5375
+mode=cache cache=4 thr=64 score=2360

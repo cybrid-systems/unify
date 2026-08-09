@@ -45,16 +45,27 @@ Also each `run-continuous` cycle:
 | **squeeze** | **parallel local policy grid + multi-worker CPU burn (no LLM)** |
 | project-evolve | LLM every `UNIFY_LLM_EVERY` cycles; **skipped** if squeeze just gained |
 
-### Squeeze (local, CPU-bound)
+### Aura-hot (primary — in-process, EDSL)
 
 ```bash
-./scripts/kv-squeeze.sh   # UNIFY_SQUEEZE_JOBS parallel aura policy-bench
+./scripts/aura-hot.sh
 ```
 
-- Grid: mode × cache × thr → `LOAD_SCORE_TOTAL`
-- Burn: N parallel heavy `load-sim`
-- Accept only if verify score ≥ baseline + smoke green
-- Patches `kv:_default-policy` surgically; commits when improved
+| Phase | Aura surface |
+|-------|----------------|
+| denseness | `mutate:rebind` + `ast:snapshot` multi-cand (`hot-denseness.aura`) |
+| policy grid | **one process**, all policies (`hot-squeeze.aura`) — no per-cell cold start |
+| fiber soak | flat `fiber:spawn`/`join` on best policy |
+| burn | optional multi-process `load-sim` farm |
+| accept | verify load_score ≥ baseline + smoke; patch `kv:_default-policy` |
+
+### Multi-process squeeze (optional CPU farm)
+
+```bash
+UNIFY_SQUEEZE=1 ./scripts/kv-squeeze.sh
+```
+
+LLM project-evolve only every `UNIFY_LLM_EVERY` cycles, skipped when hot/squeeze gains.
 
 ## Fitness
 

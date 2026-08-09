@@ -24,11 +24,12 @@
 #   UNIFY_FIBER_WAVES     sustained multi-wave fanout rounds (default 4)
 #   UNIFY_FIBER_BATCH     live concurrent thread cap per fanout (default 16; 0=unlimited)
 #   UNIFY_LOAD_SIM        1 = standalone load-sim each cycle (default 1)
-#   UNIFY_SQUEEZE         1 = local parallel policy grid + CPU burn (default 1)
-#   UNIFY_SQUEEZE_JOBS    parallel aura workers (default nproc capped 10)
+#   UNIFY_AURA_HOT        1 = in-process denseness mutate + hot-squeeze (default 1)
+#   UNIFY_SQUEEZE         1 = multi-process policy grid (default 0 if hot on)
+#   UNIFY_SQUEEZE_JOBS    parallel aura workers for burn/mp grid
 #   UNIFY_LLM_EVERY       run LLM project-evolve every N cycles (default 3);
-#                         skipped when squeeze just improved policy
-#   UNIFY_DURABLE_EVOLVE  1 = also run function-axis explore (default 0)
+#                         skipped when hot/squeeze just improved policy
+#   UNIFY_DURABLE_EVOLVE  1 = multi-axis denseness explore (default 1)
 #   UNIFY_GIT_COMMIT      1 = commit on success (default 1)
 #   UNIFY_GIT_PUSH         1 = git push after commit (default 1)
 #   UNIFY_STOP_FILE       path; if exists, exit after current cycle
@@ -58,7 +59,7 @@ export UNIFY_SELF_EVOLVE="${UNIFY_SELF_EVOLVE:-0}"
 export UNIFY_PROJECT_EVOLVE="${UNIFY_PROJECT_EVOLVE:-1}"
 export UNIFY_PROJECT="${UNIFY_PROJECT:-projects/kv}"
 # Old single-function denseness explore — off by default.
-export UNIFY_DURABLE_EVOLVE="${UNIFY_DURABLE_EVOLVE:-0}"
+export UNIFY_DURABLE_EVOLVE="${UNIFY_DURABLE_EVOLVE:-1}"
 export UNIFY_GIT_COMMIT="${UNIFY_GIT_COMMIT:-1}"
 export UNIFY_GIT_PUSH="${UNIFY_GIT_PUSH:-1}"
 # MiniMax controller: long timeout as project sources grow
@@ -71,16 +72,21 @@ export UNIFY_FIBER_KEYS="${UNIFY_FIBER_KEYS:-128}"
 export UNIFY_FIBER_WAVES="${UNIFY_FIBER_WAVES:-4}"
 export UNIFY_FIBER_BATCH="${UNIFY_FIBER_BATCH:-16}"
 export UNIFY_LOAD_SIM="${UNIFY_LOAD_SIM:-1}"
-export UNIFY_SQUEEZE="${UNIFY_SQUEEZE:-1}"
+export UNIFY_AURA_HOT="${UNIFY_AURA_HOT:-1}"
+# multi-process grid optional; hot path is default (in-process = real Aura leverage)
+export UNIFY_SQUEEZE="${UNIFY_SQUEEZE:-0}"
 export UNIFY_SQUEEZE_JOBS="${UNIFY_SQUEEZE_JOBS:-0}"
 export UNIFY_LLM_EVERY="${UNIFY_LLM_EVERY:-3}"
 export UNIFY_LOAD_KEYS="${UNIFY_LOAD_KEYS:-64}"
 export UNIFY_LOAD_OPS="${UNIFY_LOAD_OPS:-256}"
+export UNIFY_HOT_FIBER_N="${UNIFY_HOT_FIBER_N:-24}"
 export AURA_BIN="${AURA_BIN:-$ROOT/../aura-grok/build/aura}"
 export AURA_SANDBOX="${AURA_SANDBOX:-off}"
-# tighter sleep when squeezing (CPU-bound loop)
-if [[ "${UNIFY_SQUEEZE}" == "1" && "${UNIFY_SLEEP_SEC:-}" == "" ]]; then
-  SLEEP_SEC="${SLEEP_SEC:-15}"
+# tighter sleep when hot/squeeze (CPU-bound loop)
+if [[ "${UNIFY_AURA_HOT}" == "1" || "${UNIFY_SQUEEZE}" == "1" ]]; then
+  if [[ -z "${UNIFY_SLEEP_SEC:-}" ]]; then
+    SLEEP_SEC=10
+  fi
 fi
 
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
@@ -330,8 +336,30 @@ while true; do
     fi
   fi
 
-  # Local CPU squeeze: parallel policy grid + heavy burn (NO LLM)
-  squeeze_gain=0
+  # Aura-native hot path: denseness mutate:rebind + in-process policy grid + fiber soak
+  hot_gain=0
+  if [[ "${UNIFY_AURA_HOT}" == "1" ]]; then
+    if run_step "aura-hot" \
+      "./scripts/aura-hot.sh" \
+      "RESULT pass aura-hot" \
+      "$cdir/aura-hot.log"; then
+      c_ok=$((c_ok + 1))
+      if grep -q 'improved=1' "$cdir/aura-hot.log"; then
+        hot_gain=1
+        log "aura-hot GAIN — denseness+policy (LLM may skip)"
+      fi
+      if git log -1 --oneline 2>/dev/null | grep -qE 'aura-hot|squeeze policy'; then
+        log "git tip: $(git log -1 --oneline)"
+      fi
+    else
+      log "WARN aura-hot soft-fail"
+      c_fail=$((c_fail + 1))
+    fi
+  else
+    log "skip aura-hot (UNIFY_AURA_HOT=0)"
+  fi
+
+  # Optional multi-process squeeze (extra CPU farm; hot path is primary)
   if [[ "${UNIFY_SQUEEZE}" == "1" ]]; then
     if run_step "squeeze" \
       "./scripts/kv-squeeze.sh" \
@@ -339,25 +367,20 @@ while true; do
       "$cdir/squeeze.log"; then
       c_ok=$((c_ok + 1))
       if grep -q 'improved=1' "$cdir/squeeze.log"; then
-        squeeze_gain=1
-        log "squeeze GAIN — local policy win (LLM may skip)"
-      fi
-      if git log -1 --oneline 2>/dev/null | grep -qE 'squeeze policy'; then
-        log "git tip: $(git log -1 --oneline)"
+        hot_gain=1
+        log "squeeze GAIN — multi-process grid"
       fi
     else
       log "WARN squeeze soft-fail"
       c_fail=$((c_fail + 1))
     fi
-  else
-    log "skip squeeze (UNIFY_SQUEEZE=0)"
   fi
 
-  # LLM project-evolve: every UNIFY_LLM_EVERY cycles, or always if no squeeze gain
+  # LLM project-evolve: every UNIFY_LLM_EVERY cycles; skip if hot/squeeze gained
   run_llm=0
   if [[ "${UNIFY_PROJECT_EVOLVE}" == "1" ]]; then
-    if [[ "$squeeze_gain" -eq 1 ]]; then
-      log "skip LLM this cycle (squeeze already improved)"
+    if [[ "$hot_gain" -eq 1 ]]; then
+      log "skip LLM this cycle (aura-hot/squeeze already improved)"
       run_llm=0
     elif [[ "$((cycle % UNIFY_LLM_EVERY))" -eq 0 || "$cycle" -eq 1 ]]; then
       run_llm=1

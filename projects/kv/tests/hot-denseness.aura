@@ -1,0 +1,79 @@
+; projects/kv/tests/hot-denseness.aura — in-process mutate:rebind multi-cand denseness
+;
+; Uses unify-explore: install four axes → sandbox candidates → select winner.
+; This is the EDSL path (ast:snapshot / mutate:rebind / eval-current).
+;
+; RESULT pass project=kv-hot-denseness
+
+(require "unify-explore" all:)
+
+(let* ((t0 (try (current-time-ms) (catch (e) 0)))
+       (installed
+         (unify:explore-install!
+           "(lambda (x) (* x 2))"
+           "(lambda (n) (/ (* n (- n 1)) 2))"
+           "(lambda (x) (* x 3))"
+           "(lambda (x) (modulo (+ x 1) 3))"))
+       (v0 (unify:explore-verify-all))
+       ; multi-cand on score axis toward (* x 3)
+       (sel-score
+         (unify:explore-select-axis! "score"
+           (list "(lambda (x) (* x 3))"
+                 "(lambda (x) (* x 2))"
+                 "(lambda (x) (+ x x x))"
+                 "(lambda (x) (* 3 x))")))
+       (v1 (unify:explore-verify-all))
+       (score7 (try (score 7) (catch (e) -1)))
+       ; multi-cand on leaf (keep scale law leaf(6)=2*leaf(3))
+       (sel-leaf
+         (unify:explore-select-axis! "leaf"
+           (list "(lambda (x) (* x 4))"
+                 "(lambda (x) (* x 3))"
+                 "(lambda (x) (* x 5))")))
+       (v2 (unify:explore-verify-all))
+       (leaf3 (try (leaf 3) (catch (e) -1)))
+       (leaf6 (try (leaf 6) (catch (e) -1)))
+       (t1 (try (current-time-ms) (catch (e) 0)))
+       (aref
+         (lambda (xs key)
+           (let ((ys xs) (found #f) (val #f))
+             (while (lambda () (and (pair? ys) (not found)))
+               (lambda ()
+                 (let ((p (car ys)))
+                   (if (and (pair? p) (equal? (car p) key))
+                     (begin (set! found #t) (set! val (cdr p)))
+                     #f)
+                   (set! ys (cdr ys)))))
+             val)))
+       (ok-score (and (pair? sel-score)
+                      (eq? (aref sel-score ":ok") #t)
+                      (= score7 21)))
+       (ok-leaf (and (pair? sel-leaf)
+                     (eq? (aref sel-leaf ":ok") #t)
+                     (number? leaf3) (number? leaf6)
+                     (= leaf6 (* 2 leaf3))))
+       (ok (and installed v0 v1 v2 ok-score ok-leaf)))
+
+  (display "=== hot-denseness mutate:rebind multi-cand ===") (newline)
+  (display "install=") (display installed)
+  (display " verify0=") (display v0) (newline)
+  (display "select-score=") (write sel-score) (newline)
+  (display "score(7)=") (display score7)
+  (display " verify1=") (display v1) (newline)
+  (display "select-leaf=") (write sel-leaf) (newline)
+  (display "leaf3=") (display leaf3)
+  (display " leaf6=") (display leaf6)
+  (display " verify2=") (display v2) (newline)
+  (display "elapsed_ms=") (display (if (> (- t1 t0) 0) (- t1 t0) 0)) (newline)
+
+  (if ok
+    (begin
+      (display "RESULT pass project=kv-hot-denseness")
+      (display " score7=") (display score7)
+      (display " leaf3=") (display leaf3)
+      (newline))
+    (begin
+      (display "RESULT fail project=kv-hot-denseness")
+      (display " ok-score=") (display ok-score)
+      (display " ok-leaf=") (display ok-leaf)
+      (newline))))
