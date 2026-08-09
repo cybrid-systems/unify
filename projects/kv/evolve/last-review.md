@@ -1,16 +1,18 @@
 # Controller REVIEW
 
-- **Strengths:** 57/57 already green across Phases 0–8 (open/set/get → set-if-absent). The alist-of-cons representation is defensive (skips stray non-pair cells), insertion order is preserved by every op, all ops are pure functional, no FS / network / host escape used. Export-before-define discipline is intact, API names are stable, the `kv:pick` ordering bug from g6 is fixed, and `kv:rename` / `kv:swap`-style "refuse on ambiguity" semantics are consistent.
-- **Failures / Risks:** `kv:version` is still 7 even though Phase 8 is fully implemented (bookkeeping drift — fixable in the same patch). No real "host escape" risk to stress; SPEC table only enumerates through Phase 4, so we're already ahead of the published roadmap — pure-Aura denseness posture means there's still room to add small composable ops without leaking any new host dependency. No actual test failures to fix.
-- **Denseness posture:** All new helpers should be derived from the existing `_fold`/`_set`/`_has`/`_ref` primitives, preserve insertion order, refuse on ambiguity rather than guessing, and be tested in `tests/smoke.aura` while every prior test stays green.
+- **Strengths**: 66/66 green across Phases 0–9 (open/set/get → swap). Alist-of-cons representation is robust (defensive skipping of non-pair cells), insertion order is preserved by every op, all ops are pure functional, no FS / network / host escape. Export-before-define discipline is intact, API names are stable since v1, `kv:pick` walks the *store*, `kv:rename`/`kv:swap` consistently refuse ambiguous writes, `kv:equal?` correctly distinguishes `#f` values from misses.
+- **Failures / Risks**: `kv:version` is 9 — needs bump to 10 once Phase 10 lands. Phase 9 opened the "aggregation" category with `kv:sum`/`kv:count`; the natural statistical siblings (`min`, `max`, `product`, `avg`) are missing. `kv:sum`'s doc note ("assumed numeric") is the right template — the same posture applies to the new ops. No API renames; no internals touched beyond adding ops + bumping version + extending the comment roadmap.
+- **Denseness / host-risk**: Zero host escapes introduced. No `write-file`, no `read`, no network. Everything is `kv:_fold`-derived; `kv:min`/`kv:max` walk the alist directly only because they need `<`/`>` semantics the higher-order fold would still express cleanly (and `_fold` is already used elsewhere for similar reductions) — but the early-init-from-head pattern is what makes them O(n) without an extra seed.
 
 # DIRECTION
 
-- **Target phase: Phase 9 — aggregation / positional / composition helpers.** Same posture as Phase 8 (pure Aura, derived from existing alist primitives, insertion-order preserved by construction, no FS escapes, no API renames). Keeps all T1–T42 green.
-- **Ops to add (5 new):**
-  - `kv:nth`  — `(store n)` 0-indexed entry, `#f` on out-of-range / empty; skips non-pair cells defensively
-  - `kv:count` — `(store proc)` number of matching entries; 0 on empty (avoids allocating an intermediate filter store)
-  - `kv:sum`  — `(store)` sum of values; 0 on empty (additive identity so it composes with `+` / `reduce`)
-  - `kv:zip`  — `(keys vals)` build store by pairing left-to-right, stop at shorter list, insertion order follows `keys`
-  - `kv:swap` — `(store k1 k2)` atomic swap of two values; no-op when `k1 == k2` or either key is absent (consistent with `kv:rename`'s ambiguity-refusal rule)
-- **Bump `kv:version` to 9** (also fixes the bookkeeping drift from Phase 8). Don't touch any existing op or test. Extend `tests/smoke.aura` with T43–T47c (9 new tests).
+- **Target phase: Phase 10 — statistical / numeric aggregation helpers.** Same posture as Phase 9 (pure Aura, derived from existing alist primitives, insertion order respected where relevant, no FS escapes, no API renames). Keeps all T1–T47c green.
+- **Ops to add (4 new, all pure, all derive from existing internals; export-before-define preserved):**
+  - `kv:min`      — `(store)` → smallest value (compared with `<`); `#f` on empty
+  - `kv:max`      — `(store)` → largest value (compared with `>`); `#f` on empty
+  - `kv:product`  — `(store)` → product of all values; `1` on empty (multiplicative identity, mirrors `kv:sum`'s `0`-seed)
+  - `kv:avg`      — `(store)` → arithmetic mean; `#f` on empty (honest vacuous answer, consistent with `kv:first`/`kv:last`/`kv:find`/`kv:nth`)
+- Bump `kv:version` to `10` and add the Phase 10 line to the header comment roadmap.
+- Extend `tests/smoke.aura` with **T48–T53** (8 tests: basic, single-entry, negative values, empty, defensive skip, compose-with-merge).
+- Do **NOT** touch any existing op or test — current 66/66 is the floor.
+- Do **NOT** add `min-by`/`max-by`/`stdev`/`product-of-squares` — that's Phase 11+ territory; stay tight.

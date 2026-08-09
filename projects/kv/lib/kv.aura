@@ -13,6 +13,8 @@
 ;             set-if-absent).
 ; Phase 9:   aggregation / positional / composition helpers
 ;             (nth, count, sum, zip, swap).
+; Phase 10:  statistical / numeric aggregation helpers
+;             (min, max, product, avg).
 ;
 ; Store representation: alist of (key . val) pairs.
 ;   * Keys are strings.
@@ -66,9 +68,13 @@
         kv:count
         kv:sum
         kv:zip
-        kv:swap)
+        kv:swap
+        kv:min
+        kv:max
+        kv:product
+        kv:avg)
 
-(define kv:version 9)
+(define kv:version 10)
 
 ; ---------------------------------------------------------------------------
 ; Internal alist primitives.
@@ -655,3 +661,84 @@
                 (if (equal? k k2)
                   (kv:_set acc k2 v1)
                   (kv:_set acc k v))))))))))
+
+; ---------------------------------------------------------------------------
+; Phase 10 statistical / numeric aggregation helpers.
+; Pure functional; insertion order is irrelevant for scalar results, but
+; the walks still respect it and skip non-pair cells defensively (same
+; posture as every other op). No FS escapes. Values are assumed numeric
+; — the same contract kv:sum takes — so non-numeric values are the
+; caller's problem, not the store's.
+;
+; Conventions:
+;   * `kv:min` / `kv:max` walk the store once and return the smallest /
+;     largest value compared with `<` / `>`. Both return `#f` on an
+;     empty store (consistent with kv:first / kv:last / kv:nth /
+;     kv:find's "no value" sentinel — there is no "average of nothing"
+;     or "min of nothing" that is more honest than `#f`).
+;   * `kv:product` is the multiplicative reduction of all values, seeded
+;     at `1` (the multiplicative identity), so it composes cleanly with
+;     `*` and with `kv:reduce` — the same shape as `kv:sum` seeded at
+;     `0` (the additive identity).
+;   * `kv:avg` returns the arithmetic mean; on an empty store it
+;     returns `#f` because `0` is the wrong answer for "mean of
+;     nothing". Defined in terms of `kv:sum` and `kv:size` so the
+;     result is consistent with both underlying primitives — no
+;     double-walk, no hidden aggregation.
+; ---------------------------------------------------------------------------
+
+; (kv:min store) -> min value | #f.
+; Smallest value in insertion order (compared with `<`). Returns `#f`
+; when the store is empty. Walks left-to-right, skipping any stray
+; non-pair cells defensively so a malformed input cannot crash the
+; reducer. O(n) walk, no extra allocation.
+(define (kv:min store)
+  (if (null? store)
+    #f
+    (let ((p (car store)))
+      (if (pair? p)
+        (let loop ((xs (cdr store)) (m (cdr p)))
+          (if (null? xs)
+            m
+            (let ((q (car xs)))
+              (if (pair? q)
+                (loop (cdr xs) (if (< (cdr q) m) (cdr q) m))
+                (loop (cdr xs) m)))))
+        (kv:min (cdr store))))))
+
+; (kv:max store) -> max value | #f.
+; Largest value in insertion order (compared with `>`). Returns `#f`
+; when the store is empty. Same defensive-skip posture as kv:min.
+(define (kv:max store)
+  (if (null? store)
+    #f
+    (let ((p (car store)))
+      (if (pair? p)
+        (let loop ((xs (cdr store)) (m (cdr p)))
+          (if (null? xs)
+            m
+            (let ((q (car xs)))
+              (if (pair? q)
+                (loop (cdr xs) (if (> (cdr q) m) (cdr q) m))
+                (loop (cdr xs) m)))))
+        (kv:max (cdr store))))))
+
+; (kv:product store) -> product of all values.
+; Multiplicative reduction in insertion order. Empty store returns 1
+; (the multiplicative identity), matching kv:sum's 0-seed posture so
+; (kv:product s) composes cleanly with `*` and with kv:reduce for
+; custom aggregations. Skips non-pair cells defensively via _fold.
+(define (kv:product store)
+  (kv:_fold store 1 (lambda (k v acc) (* acc v))))
+
+; (kv:avg store) -> arithmetic mean | #f.
+; Returns (/ sum count). `#f` on an empty store (0/0 is undefined;
+; returning `#f` is the honest answer, matching kv:min / kv:max).
+; Defined in terms of kv:sum and kv:size so the result is consistent
+; with both primitives; the cost is two O(n) passes — same shape as
+; any other "compute both a count and a total" reduction.
+(define (kv:avg store)
+  (let ((n (kv:size store)))
+    (if (= n 0)
+      #f
+      (/ (kv:sum store) n))))

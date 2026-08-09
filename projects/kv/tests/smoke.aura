@@ -576,6 +576,66 @@
           (equal? (kv:get sw "b") 2)
           (eq? (kv:get sw "ghost") #f))))
 
+; ---- Phase 10: statistical / numeric aggregation helpers ----
+
+; T48: min() returns the smallest value in insertion order; #f on empty.
+(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 3) "b" 1) "c" 2)))
+  (t "T48-min"
+     (and (= (kv:min s) 1)
+          (eq? (kv:min (kv:open)) #f))))
+
+; T48b: min() on a single-entry store returns that value.
+(t "T48b-min-single"
+   (= (kv:min (kv:set (kv:open) "only" 42)) 42))
+
+; T48c: min() handles negative values correctly (no implicit floor at 0).
+(let* ((s (kv:set (kv:set (kv:open) "a" -5) "b" -2)))
+  (t "T48c-min-negative"
+     (= (kv:min s) -5)))
+
+; T49: max() returns the largest value in insertion order; #f on empty.
+(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 3) "b" 1) "c" 2)))
+  (t "T49-max"
+     (and (= (kv:max s) 3)
+          (eq? (kv:max (kv:open)) #f))))
+
+; T49b: max() on a single-entry store returns that value.
+(t "T49b-max-single"
+   (= (kv:max (kv:set (kv:open) "only" 7)) 7))
+
+; T50: product() returns the product of all values; 1 on empty
+; (multiplicative identity, so it composes cleanly with * and reduce).
+(let* ((s (kv:set (kv:set (kv:set (kv:set (kv:open) "a" 2) "b" 3) "c" 4) "d" 5)))
+  (t "T50-product"
+     (and (= (kv:product s) 120)
+          (= (kv:product (kv:open)) 1))))
+
+; T51: avg() returns the arithmetic mean of all values; #f on empty
+; (vacuous case — 0 is the wrong answer for "mean of nothing").
+(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 2) "b" 4) "c" 6)))
+  (t "T51-avg"
+     (and (= (kv:avg s) 4)
+          (eq? (kv:avg (kv:open)) #f))))
+
+; T52: min/max are defensive against stray non-pair cells (they skip them,
+; preserving the same posture used by every other op in the store).
+(t "T52-min-max-defensive"
+   (let* ((st (cons 'stray-atom (kv:set (kv:set (kv:open) "a" 5) "b" 10))))
+     (and (= (kv:min st) 5)
+          (= (kv:max st) 10))))
+
+; T53: stats compose naturally with kv:merge — combined store's stats
+; reflect both sides (this exercises the "no implicit side-channels"
+; property: a store built from two sources is just a store).
+(let* ((a (kv:set (kv:set (kv:open) "a" 2) "b" 4))
+       (b (kv:set (kv:set (kv:open) "c" 8) "d" 10))
+       (m (kv:merge a b)))
+  (t "T53-stats-compose"
+     (and (= (kv:min m) 2)
+          (= (kv:max m) 10)
+          (= (kv:sum m) 24)
+          (= (kv:product m) 640))))
+
 (display "SCORE ")
 (display pass)
 (display "/")

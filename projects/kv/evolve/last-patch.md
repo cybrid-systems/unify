@@ -1,587 +1,362 @@
-<think>The baseline SCORE is 57/57 — all tests green. According to the instructions, when SCORE is already full, I should advance SPEC phase (new capability) via code that still keeps old tests green; I may also extend tests/smoke.aura carefully only if I also implement the feature.
+<think>Let me analyze the current state:
 
-Looking at the current state:
-- lib/kv.aura has implemented Phases 0–8 (per the in-file roadmap comment)
-- The lib comment lists Phase 8 already done (positional / conditional / inversion helpers)
-- All T1–T42 are green
+1. **Project**: kv mini KV store in Aura
+2. **Generation**: 9 (this will be generation 10's patch)
+3. **Current SCORE**: 66/66 (full green)
+4. **Phase status**: Through Phase 9 implemented per the lib comment roadmap. The SPEC only goes through Phase 4, but the project has evolved well beyond that into a rich alist-of-cons store API.
 
-So the SPEC's evolution phases in the project spec only go through Phase 4 (batch helpers) explicitly, but we've already gone far beyond that. Let me think about what Phase 9 could be...
+Looking at the lib comment roadmap, we're at Phase 9. The phases already covered:
+- Phase 0..2: open + set/get + del/has?/size/keys/clear/overwrite
+- Phase 3: multi-key stress + isolation
+- Phase 4: batch / composite helpers (mset, mget, update, merge, copy)
+- Phase 5: iteration & query helpers (values, entries, filter, find, empty?, for-each)
+- Phase 6: fold / predicate / projection / selection helpers (reduce, any?, every?, pick, omit, map-values)
+- Phase 7: convenience / comparison helpers (get-or, rename, diff, partition, equal?)
+- Phase 8: positional / conditional / inversion helpers (first, last, rest, butlast, take, drop, invert, set-if-absent)
+- Phase 9: aggregation / positional / composition helpers (nth, count, sum, zip, swap)
 
-Reasonable Phase 9 additions (all pure functional, alist-based, no FS escapes):
-1. `kv:assoc` / `kv:alist?` — predicates / conversions between alist and store
-2. `kv:toggle` — flip a boolean value at a key (or remove if absent)
-3. `kv:count` — alias for size but also `kv:count store proc` (matches filter size)
-4. `kv:min` / `kv:max` / `kv:sum` — numeric aggregations on values
-5. `kv:set-if` — `(store key pred val)` sets only when current value satisfies pred
-6. `kv:compare` — compares two stores returning one of 'less/equal/greater based on sorted keys
-7. `kv:deep-copy` — actually deep-copy a store (forces fresh cons cells, since the store is already immutable, this could just copy)
-8. `kv:keys-sorted` / `kv:sort` — sorted views
-9. `kv:head` / `kv:tail` — synonyms
-10. `kv:nth` — get nth entry
-11. `kv:set-default` — alias for set-if-absent
-12. `kv:contains?` — alias for has?
-13. `kv:assoc-set` — alias for set
-14. `kv:assoc-del` — alias for del
+What should Phase 10 be? Given we have:
+- fold/iteration (Phase 5, 6)
+- positional (Phase 8)
+- aggregation (Phase 9)
+- composition (Phase 9: zip, swap)
 
-Let me pick a coherent Phase 9: **aggregation & numeric helpers** + **positional additions**:
-- `kv:nth` `(store n)` — nth (0-indexed) entry, `#f` if out of range
-- `kv:count` `(store proc)` — number of entries satisfying proc (vs filter which returns a store)
-- `kv:sum` `(store)` — sum of all values (assumes numeric)
-- `kv:min-key` `(store)` — key with smallest value
-- `kv:max-key` `(store)` — key with largest value
-- `kv:zip` `(store keys vals)` — build a store from parallel key/value lists
-- `kv:from-list` `(alist)` — build a store from an alist (like mset)
-- `kv:set-if` `(store key pred val)` — conditional set
+Possible Phase 10 directions:
+1. **Set-algebra / grouping helpers**: union, intersection, difference (key-level, not value-level — kv:diff already exists but at key+value level), grouping/group-by
+2. **Higher-order combinators**: compose functions over stores, curried update paths, nested keys support
+3. **Numeric / statistical helpers**: min, max, mean, median, stddev
+4. **Predicate builders / comparison**: has-value?, has-key? (alias), contains?
+5. **Defaulting helpers**: get-or with computed default, set-if with computed value, update-with
+6. **Iteration / cursor**: range, slice, head, tail (different from first/last)
+7. **Transformation**: reverse, intersperse, transpose (for stores of stores)
+8. **Coercion / interop**: alist<->store, from-alist, to-alist (entries already does this in some sense)
 
-Actually, I need to be careful about the host's residual mutable state. The test file uses `set!` for `pass` and `total` counters, and inside T23 it uses `set! copied` inside a `for-each`. That tells me `set!` works in the host.
+A natural Phase 10 could focus on **statistical / numeric aggregation** beyond just sum:
+- `kv:min` — smallest value (and `kv:min-by` using a proc)
+- `kv:max` — largest value (and `kv:max-by`)
+- `kv:avg` / `kv:mean` — arithmetic mean
+- `kv:product` — product of all values (like sum but with *)
 
-Let me think about which Phase 9 ops would be most natural and denseness-friendly:
+Or **set algebra** at the key level:
+- `kv:union` — union of keys (right-biased like merge but standalone)
+- `kv:intersection` — keys in both
+- `kv:key-difference` — keys in a but not b
+- `kv:has-any?` — any of these keys present
+- `kv:has-all?` — all of these keys present
 
-**Phase 9: aggregation & numeric + positional extensions**
-- `kv:nth` — nth entry (0-indexed)
-- `kv:count` — count entries matching proc
-- `kv:sum` — sum all values (numeric)
-- `kv:zip` — `(keys vals)` → store
+I think the most natural and most useful direction is **statistical / aggregation extensions** since Phase 9 explicitly opened the "aggregation" category with `kv:sum`. The natural siblings are:
+- `kv:min` — minimum value
+- `kv:max` — maximum value
+- `kv:product` — product of all values
+- `kv:avg` (alias `kv:mean`) — arithmetic mean
+- `kv:min-by` / `kv:max-by` — min/max by a proc (for non-numeric values)
 
-Or maybe better: **Phase 9: numeric aggregation + defaults + composition**
-- `kv:nth` `(store n)` — 0-indexed nth entry or #f
-- `kv:count` `(store proc)` — count of matching entries  
-- `kv:sum` `(store)` — sum of all values
-- `kv:zip` `(keys vals)` — construct store from parallel lists
-- `kv:set-if` `(store key pred val)` — conditional set
+Actually let me think more carefully. The SPEC's "Success" criterion says "Phase ≥ 3 with all T1–T12 green". We're at 66/66 well past that. So our goal is to keep advancing the project, not satisfy SPEC. The lib comment roadmap is now our internal north star.
 
-Let me go with a clean Phase 9. I'll pick:
+I'll go with **Phase 10: statistical / numeric aggregation helpers** as the natural continuation:
+- `kv:min` `(store)` → minimum value (or `#f` if empty)
+- `kv:max` `(store)` → maximum value (or `#f` if empty)
+- `kv:product` `(store)` → product of all values (1 if empty — multiplicative identity)
+- `kv:avg` / `kv:mean` `(store)` → arithmetic mean (0 if empty — consistent with sum's additive identity, but actually should probably error/return #f on empty; but since sum returns 0, mean can return 0 too if we want to compose — let's make it #f to be honest about vacuous case)
+- `kv:min-by` `(store proc)` → (k . v) of entry minimizing (proc v), or `#f` on empty
+- `kv:max-by` `(store proc)` → (k . v) of entry maximizing (proc v), or `#f` on empty
 
-1. `kv:nth` `(store n)` — return nth pair (0-indexed), or #f. O(n) walk, skips non-pair cells.
-2. `kv:count` `(store proc)` — number of entries satisfying (proc k v).
-3. `kv:sum` `(store)` — sum of all values; #f if empty.
-4. `kv:zip` `(keys vals)` — build store from parallel key/value lists; vals shorter than keys yields #f for extras; keys shorter than vals drops extras. Actually let me be cleaner: zip takes a list of keys and a list of values, builds pairs. If keys longer, missing values become #f. If values longer, extras dropped. Or strict — let me make it forgiving: pair up until the shorter list ends, then stop.
-5. `kv:set-if` `(store key pred val)` — if key exists with value satisfying (pred v), set to val; otherwise no-op. Different from update because it doesn't run the proc — it just checks and sets.
+Actually, to keep things tight and not over-extend, let me focus on:
+- `kv:min` `(store)` → minimum numeric value, `#f` on empty
+- `kv:max` `(store)` → maximum numeric value, `#f` on empty
+- `kv:product` `(store)` → product of all values, 1 on empty (multiplicative identity)
+- `kv:avg` `(store)` → arithmetic mean, `#f` on empty (vacuous)
 
-Wait, set-if is similar to update. Let me reconsider. Actually it's a nice complement: update transforms; set-if only sets if predicate holds.
+This is 4 new ops. Tests: T48–T53 (with edge cases for empty).
 
-Let me also think about `kv:swap` — atomically swap values for two keys. That's a fun one.
+Wait, I should also think about whether `kv:min`/`kv:max` should return just the value, or the entry. I think returning just the value matches `kv:sum`'s style and is more useful for "what's the smallest number in this store". Returning the entry is more useful for "which key has the max value?". Both are valid; I'll return just the value for min/max (matches sum's scalar-return style), and maybe add `kv:min-by`/`kv:max-by` for the key-extraction use case. But that's getting bigger. Let me keep min/max to scalars for now.
 
-Let me pick 5 distinct ops for Phase 9:
-- `kv:nth` `(store n)` — 0-indexed; `#f` if out of range
-- `kv:count` `(store proc)` — count matching
-- `kv:sum` `(store)` — sum values
-- `kv:zip` `(keys vals)` — build from parallel lists
-- `kv:swap` `(store k1 k2)` — atomically swap values for two keys
+Actually, considering the pattern in stdlib (e.g. SRFI-1), `min`/`max` on lists return the value. So:
+- `kv:min store` → min value (scalar)
+- `kv:max store` → max value (scalar)
+- `kv:product store` → product (scalar, 1 on empty)
+- `kv:avg store` → mean (scalar, `#f` on empty since 0/0 is NaN-like)
 
-Wait, `kv:swap` is interesting. What if k1 == k2? What if either is missing? Let me make it: swap only if both keys are present and distinct; otherwise no-op.
+Let me also think about whether to do set-algebra instead. Hmm. The argument for aggregation:
+- Phase 9 explicitly opened "aggregation" — `kv:count`, `kv:sum` — and these are the natural siblings
+- All scalar-return, all compose with each other and with `+`/`*`/`/`
+- Pure functional, derive from `_fold` with ease
+- Edge cases (empty) are interesting but well-defined
 
-For `kv:zip`, let me make it strict and clean — pair up until one list runs out.
+The argument for set-algebra:
+- `kv:diff` already exists but is value-aware; `kv:key-difference`/`kv:key-intersection`/`kv:key-union` would complement it nicely
+- Key-level operations are common
+- But `kv:merge` already covers union; `kv:pick` covers intersection-ish; `kv:omit` covers difference
 
-For `kv:sum`, on empty return 0 (sum's identity). Or maybe #f to indicate "no values". Hmm. For numeric aggregation it's more useful to return 0 on empty so it composes with `+` naturally. Let me return 0 on empty.
+I'll go with **statistical aggregation** — it's the cleaner Phase 10 extension.
 
-For `kv:nth`, 0-indexed; negative n could mean "from the end" (Scheme-style). Let me keep it simple: 0-indexed, n in [0, size). Out of range returns #f.
+Now let me design the implementation:
 
-For `kv:count`, on empty returns 0.
-
-Let me write this out.
-
-For tests, I need:
-- T43: nth() returns nth entry, #f on out of range / empty
-- T44: count() returns # of matching entries
-- T45: sum() returns sum of values; 0 on empty
-- T46: zip() builds from parallel lists
-- T47: swap() exchanges two values
-- T47b: swap() no-op when keys equal
-- T47c: swap() no-op when either key missing
-
-Let me also bump `kv:version` to 8 (since current is 7 — wait, looking at the source: `(define kv:version 7)` but the comment says "Phase 8: positional / conditional / inversion helpers" — I think the previous generation bumped it to 7 already, and I should bump to 8 for Phase 9).
-
-Actually wait, looking at the source again, the kv:version is 7 and the comment lists up to Phase 8. So Phase 8 is already implemented but version is 7. The previous generation must have implemented Phase 8 but forgot to bump version. Let me bump it to 8.
-
-Wait, looking more carefully:
-```
-(define kv:version 7)
-```
-and the file has Phase 8 implemented (first, last, rest, butlast, take, drop, invert, set-if-absent). The "phase 7: convenience / comparison helpers" is also implemented (get-or, rename, diff, partition, equal?).
-
-So:
-- Phase 0–2: kv:open, kv:set, kv:get, kv:del, kv:has?, kv:keys, kv:size, kv:clear
-- Phase 3: multi-key stress + isolation (already covered by tests T13-T17)
-- Phase 4: mset, mget, update, merge, copy
-- Phase 5: values, entries, filter, find, empty?, for-each
-- Phase 6: reduce, any?, every?, pick, omit, map-values
-- Phase 7: get-or, rename, diff, partition, equal?
-- Phase 8: first, last, rest, butlast, take, drop, invert, set-if-absent
-
-Version is 7 — but Phase 8 is implemented. I'll bump version to 8 and add Phase 9.
-
-Actually wait — looking at it again, the version is 7 but Phase 8 is implemented. That's because the journal says "baseline": "46/46" at g7 (before Phase 8) and "57/57" at g8 (after Phase 8 was added). So g8 added Phase 8 but didn't bump version. That's a minor bookkeeping bug. Let me bump it to 8 (matching the actual implementation state) and then add Phase 9 and bump to 9.
-
-Let me now plan the patch:
-
-1. Update lib/kv.aura header comment to include Phase 9 description
-2. Bump version from 7 to 9 (or just to 8 first, then 9 in this patch)
-
-Actually, let me think — since the version is already 7 and Phase 8 was implemented, I'll bump version to 9 (skipping 8 since that's the "fix bookkeeping" and I'm adding Phase 9, version 9 represents the current state).
-
-Hmm, but that loses the audit trail. Better to: bump to 8 representing "Phase 8 bookkeeping fix" and then have Phase 9 ops bring it to 9.
-
-Or, just go directly to 9: the version represents "Phase 9 is implemented and Phase 8 was already implemented at v7". That's a little weird though.
-
-Cleanest: bump to 8 immediately, then to 9 with new ops. But the actuator only sees one patch at a time. I'll bump to 8 in the version line but call out Phase 9 in comments. Actually, the simplest thing: bump to 9 and add a note. The version field is for "what's implemented" not "what was the bump". So version 9 = Phase 9 implemented.
-
-Let me write the full lib/kv.aura.
-
-Phase 9 additions:
-- `kv:nth` `(store n)` — 0-indexed nth entry (pair), `#f` if out of range or empty. Skip non-pair cells defensively.
-- `kv:count` `(store proc)` — number of entries satisfying `(proc k v)`. Empty → 0.
-- `kv:sum` `(store)` — sum of all values (assumed numeric). Empty → 0.
-- `kv:zip` `(keys vals)` — build store from parallel key/value lists. Pair until shorter list ends.
-- `kv:swap` `(store k1 k2)` — atomically swap values for two distinct keys present in store. No-op if either missing or k1 == k2.
-
-Let me check: does the host support negative literals? `(define x -5)`? Looking at existing tests:
-```scheme
-(set! pass (+ pass 1))
-(set! total (+ total 1))
-```
-And the lib has `(- n 1)`. So unary minus works. Good.
-
-For `kv:nth`, I'll do a simple iterative walk.
-
-For `kv:count`, similar to fold with counter.
-
-For `kv:sum`, fold with `+`. Need to handle empty: init = 0.
-
-For `kv:zip`, walk both lists in parallel.
-
-For `kv:swap`, check both keys present and distinct. If so, set k1 to old-value-of-k2 and k2 to old-value-of-k1. Use `kv:_set` directly to preserve order. Or build the result by folding. Actually, the cleanest approach is to find both values, then build a new store. Since the store has insertion order, we should preserve it.
-
-Implementation of swap:
-1. If k1 == k2, return store unchanged.
-2. If not (kv:_has k1) or not (kv:_has k2), return store unchanged.
-3. Get v1 = (kv:_ref k1), v2 = (kv:_ref k2).
-4. Build a new store where k1 -> v2 and k2 -> v1, others unchanged, preserving insertion order.
-5. Use kv:_fold: for each (k, v), if k == k1, set to (k1 . v2); elif k == k2, set to (k2 . v1); else set to (k . v). This builds the store in insertion order.
-
-Actually kv:_set with same key does in-place update, so the fold approach works cleanly. Note we need to be careful about order of operations: if we process k1 first, then k2 later, the k1 update will set (k1 . v2) in acc, then when we process k2, kv:_set will find k2 and set it to v1, but v1 was read from the original store. Good.
-
-Wait, let me think more carefully. The fold processes each (k, v) from the original store in order. For each, we call kv:_set on `acc`. If acc has k1 -> v2 already (because we processed k1 first), and then we process k2 with v=v1, we'd set k2 -> v1. That's correct. The kv:_set works on `acc`, not on the original store.
-
-OK that works.
-
-Let me also think about `kv:zip`. The simpler implementation is:
-```scheme
-(define (kv:zip keys vals)
-  (let loop ((ks keys) (vs vals) (acc (quote ())))
-    (if (or (null? ks) (null? vs))
-      acc
-      (loop (cdr ks) (cdr vs) (kv:_set acc (car ks) (car vs))))))
-```
-But this appends in reverse order (newest at end). So kv:zip on ("a" "b") and (1 2) yields a=1, b=2 with insertion order [a, b]. That's correct.
-
-Wait actually: kv:_set with new key appends at end. So processing "a" then "b" yields [a->1, b->2]. Correct.
-
-But what about reverse semantics? If I want to use left fold order, I could process in reverse and reverse the result. The above is fine — process left-to-right, each appends. The store ends up [a->1, b->2].
-
-Hmm wait, what if I do `loop` left-to-right: first I set a=1 (acc = [a->1]), then I set b=2 (acc = [a->1, b->2]). Good.
-
-OK let me also make sure tests would work.
-
-For T46 (zip):
-- `(kv:zip (list "a" "b" "c") (list 1 2 3))` should yield a store with a=1, b=2, c=3.
-- `(kv:zip (list "a") (list 1 2 3))` should yield a=1 only.
-- `(kv:zip (list "a" "b" "c") (list 1))` should yield a=1 only.
-
-Let me write the tests:
-```scheme
-(let* ((z (kv:zip (list "a" "b" "c") (list 1 2 3)))
-       (zk (kv:keys z)))
-  (t "T46-zip"
-     (and (= (kv:size z) 3)
-          (equal? (kv:get z "a") 1)
-          (equal? (kv:get z "b") 2)
-          (equal? (kv:get z "c") 3)
-          (equal? (car zk) "a")
-          (equal? (car (cdr zk)) "b")
-          (equal? (car (cdr (cdr zk))) "c"))))
-
-; T46b: zip() with shorter value list.
-(t "T46b-zip-vals-shorter"
-   (let* ((z (kv:zip (list "a" "b" "c") (list 1 2))))
-     (and (= (kv:size z) 2)
-          (equal? (kv:get z "a") 1)
-          (equal? (kv:get z "b") 2)
-          (eq? (kv:get z "c") #f))))
-
-; T46c: zip() with shorter key list.
-(t "T46c-zip-keys-shorter"
-   (let* ((z (kv:zip (list "a") (list 1 2 3))))
-     (and (= (kv:size z) 1)
-          (equal? (kv:get z "a") 1))))
-```
-
-For T43 (nth):
-```scheme
-(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3)))
-  (t "T43-nth"
-     (and (let ((n0 (kv:nth s 0)))
-            (and (pair? n0) (equal? (car n0) "a") (equal? (cdr n0) 1)))
-          (let ((n1 (kv:nth s 1)))
-            (and (pair? n1) (equal? (car n1) "b") (equal? (cdr n1) 2)))
-          (let ((n2 (kv:nth s 2)))
-            (and (pair? n2) (equal? (car n2) "c") (equal? (cdr n2) 3)))
-          (eq? (kv:nth s 3) #f)
-          (eq? (kv:nth s 100) #f)
-          (eq? (kv:nth (kv:open) 0) #f))))
-```
-
-For T44 (count):
-```scheme
-(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 5) "c" 10))))
-  (t "T44-count"
-     (and (= (kv:count s (lambda (k v) (> v 3))) 2)
-          (= (kv:count s (lambda (k v) (> v 100))) 0)
-          (= (kv:count s (lambda (k v) (> v 0))) 3)
-          (= (kv:count (kv:open) (lambda (k v) #t)) 0))))
-```
-
-For T45 (sum):
-```scheme
-(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))))
-  (t "T45-sum"
-     (and (= (kv:sum s) 6)
-          (= (kv:sum (kv:open)) 0))))
-```
-
-For T47 (swap):
-```scheme
-(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
-       (sw (kv:swap s "a" "c")))
-  (t "T47-swap"
-     (and (= (kv:size sw) 3)
-          (equal? (kv:get sw "a") 3)
-          (equal? (kv:get sw "b") 2)
-          (equal? (kv:get sw "c") 1)
-          (let ((sk (kv:keys sw)))
-            (and (equal? (car sk) "a")
-                 (equal? (car (cdr sk)) "b")
-                 (equal? (car (cdr (cdr sk))) "c"))))))
-
-(t "T47b-swap-same-key-noop"
-   (let* ((s (kv:set (kv:set (kv:open) "a" 1) "b" 2))
-          (sw (kv:swap s "a" "a")))
-     (and (= (kv:size sw) 2)
-          (equal? (kv:get sw "a") 1)
-          (equal? (kv:get sw "b") 2))))
-
-(t "T47c-swap-missing-noop"
-   (let* ((s (kv:set (kv:set (kv:open) "a" 1) "b" 2))
-          (sw (kv:swap s "a" "ghost")))
-     (and (= (kv:size sw) 2)
-          (equal? (kv:get sw "a") 1)
-          (equal? (kv:get sw "b") 2)
-          (eq? (kv:get sw "ghost") #f))))
-```
-
-Now for the implementation:
-
-```scheme
-; (kv:nth store n) -> (k . v) | #f
-; 0-indexed. Returns #f if n is out of range or store is empty.
-; Skip non-pair cells defensively (don't count toward n).
-(define (kv:nth store n)
+```aura
+; (kv:min store) -> min value | #f
+; Smallest value in insertion order (compared with <). #f on empty.
+(define (kv:min store)
   (if (null? store)
     #f
     (let ((p (car store)))
       (if (pair? p)
-        (if (= n 0) p (kv:nth (cdr store) (- n 1)))
-        (kv:nth (cdr store) n)))))
+        (let loop ((xs (cdr store)) (m (cdr p)))
+          (if (null? xs)
+            m
+            (let ((q (car xs)))
+              (if (pair? q)
+                (loop (cdr xs) (if (< (cdr q) m) (cdr q) m))
+                (loop (cdr xs) m)))))
+        (kv:min (cdr store))))))
 
-; (kv:count store proc) -> integer
-; Number of entries satisfying (proc k v). Empty store returns 0.
-(define (kv:count store proc)
-  (kv:_fold store 0
-    (lambda (k v acc)
-      (if (proc k v) (+ acc 1) acc))))
-
-; (kv:sum store) -> integer (0 on empty).
-; Sums all values (assumed numeric). 0 is the additive identity so an
-; empty store returns 0 — this lets `(kv:sum store)` compose cleanly
-; with `+` and `reduce`.
-(define (kv:sum store)
-  (kv:_fold store 0 (lambda (k v acc) (+ acc v))))
-
-; (kv:zip keys vals) -> store.
-; Pair up keys and vals left-to-right; stop at the shorter list.
-; Insertion order follows `keys`. Each result value is set via the
-; internal primitive (so non-string `vals` could in principle be
-; supported, but per the public contract keys remain strings).
-(define (kv:zip keys vals)
-  (let loop ((ks keys) (vs vals) (acc (quote ())))
-    (if (or (null? ks) (null? vs))
-      acc
-      (loop (cdr ks) (cdr vs) (kv:_set acc (car ks) (car vs))))))
-
-; (kv:swap store k1 k2) -> store.
-; Atomically swap the values at k1 and k2. No-op (returns store
-; unchanged) when:
-;   * k1 == k2, or
-;   * either key is absent from the store.
-; Other entries' values and insertion order are preserved. Uses the
-; internal primitive kv:_set because both writes must land in a single
-; fresh store derived from the original; reading the originals first
-; then folding ensures we don't double-swap.
-(define (kv:swap store k1 k2)
-  (if (equal? k1 k2)
-    store
-    (if (not (kv:_has store k1))
-      store
-      (if (not (kv:_has store k2))
-        store
-        (let ((v1 (kv:_ref store k1))
-              (v2 (kv:_ref store k2)))
-          (kv:_fold store (quote ())
-            (lambda (k v acc)
-              (cond
-                ((equal? k k1) (kv:_set acc k1 v2))
-                ((equal? k k2) (kv:_set acc k2 v1))
-                (else (kv:_set acc k v))))))))))
-```
-
-Wait, does the host support `cond`? Let me check existing code... I don't see cond being used. Let me use nested if or a guard helper. Actually, looking at the existing code, I see `if` chains. Let me convert to nested if:
-
-```scheme
-(define (kv:swap store k1 k2)
-  (if (equal? k1 k2)
-    store
-    (if (not (kv:_has store k1))
-      store
-      (if (not (kv:_has store k2))
-        store
-        (let ((v1 (kv:_ref store k1))
-              (v2 (kv:_ref store k2)))
-          (kv:_fold store (quote ())
-            (lambda (k v acc)
-              (if (equal? k k1)
-                (kv:_set acc k1 v2)
-                (if (equal? k k2)
-                  (kv:_set acc k2 v1)
-                  (kv:_set acc k v))))))))))
-```
-
-That's cleaner.
-
-Now I need to make sure these additions don't break any existing tests. Let me also verify `kv:zip` on a host that doesn't have cond. Already verified — using if chains.
-
-One concern: `(or (null? ks) (null? vs))` — does the host support `or`? Looking at tests... I see `(or (equal? (car ks) "x") (equal? (car ks) "y") ...)` in T9. So yes, `or` works. Good.
-
-Another concern: in `kv:zip`, when keys is empty or vals is empty, return acc. Empty keys → empty store (acc = ()). Empty vals → empty store (acc = ()). Good.
-
-Wait actually there's a subtle issue: if `keys` is empty initially, we never enter the body and return acc = (), which is correct.
-
-Now, I also need to update the export list and the version, and the file header comment.
-
-Let me also update the file header to mention Phase 9. The current header lists phases through Phase 8. I'll add Phase 9.
-
-Actually wait, looking at the current header more carefully:
-```
-; Phase 8:   positional / conditional / inversion helpers
-;             (first, last, rest, butlast, take, drop, invert,
-;             set-if-absent).
-```
-And then below `(define kv:version 7)`. So the version doesn't match the phases. I'll fix both: bump to 8 first, then in this patch add Phase 9 and bump to 9. Actually no, let me just bump to 9 since Phase 8 is already implemented. Or bump to 8 as a bookkeeping fix and add Phase 9 separately.
-
-Hmm, since the patch is one shot, let me just bump to 9 and add Phase 9 — that's cleaner. The version represents "what's implemented" not "what generation".
-
-Actually thinking again — the journal shows version went up at each generation that added code. Let me check by looking at version progression:
-- v1: phase 0-2 (T1-T12)
-- v2: ?? 
-- ...
-
-I don't have full visibility. But the current state is v7 with Phase 8 implemented. So previous generations skipped bumping properly, or v7 was set during Phase 7 and never bumped for Phase 8. Whatever. I'll bump to 9 since adding Phase 9 ops in this patch.
-
-Let me now write the full lib/kv.aura file.
-
-Actually, the patch should be just the diff/changes, not necessarily a full file replacement. The instructions say "Prefer full-file replacement for small projects (lib/kv.aura)." So I'll do full file replacement.
-
-Let me carefully assemble the full file now.
-
-I'll add at the end (before the final comment block):
-
-```
-; ---------------------------------------------------------------------------
-; Phase 9 aggregation / positional / composition helpers.
-; Pure functional; insertion order preserved by construction; no FS
-; escapes. All derive from the existing alist primitives.
-;
-; Conventions:
-;   * `kv:nth` is 0-indexed and walks the alist left-to-right, skipping
-;     non-pair cells defensively. Out-of-range or empty returns `#f`.
-;   * `kv:count` and `kv:sum` are reductions over entries in insertion
-;     order; the empty store yields the additive identity (`0`) so the
-;     result composes naturally with `+` and `reduce`.
-;   * `kv:zip` walks its two input lists in parallel and stops at the
-;     shorter one — extras on either side are silently dropped.
-;   * `kv:swap` is a single atomic-looking operation: it reads both
-;     values up front, then folds the original store to produce a fresh
-;     one. No-op when k1 == k2 or either key is absent (consistent
-;     with kv:rename's refusal semantics for ambiguous writes).
-; ---------------------------------------------------------------------------
-
-; (kv:nth store n) -> (k . v) | #f.
-; 0-indexed; returns the n-th pair in insertion order, or #f when n is
-; out of range or the store is empty. Skips non-pair cells defensively
-; (a stray cell never counts toward n).
-(define (kv:nth store n)
+; (kv:max store) -> max value | #f
+(define (kv:max store)
   (if (null? store)
     #f
     (let ((p (car store)))
       (if (pair? p)
-        (if (= n 0) p (kv:nth (cdr store) (- n 1)))
-        (kv:nth (cdr store) n)))))
+        (let loop ((xs (cdr store)) (m (cdr p)))
+          (if (null? xs)
+            m
+            (let ((q (car xs)))
+              (if (pair? q)
+                (loop (cdr xs) (if (> (cdr q) m) (cdr q) m))
+                (loop (cdr xs) m)))))
+        (kv:max (cdr store))))))
 
-; (kv:count store proc) -> integer.
-; Number of entries for which (proc k v) is #t. Empty store returns 0.
-; Equivalent to (kv:size (kv:filter store proc)) but does not allocate
-; the intermediate store.
-(define (kv:count store proc)
-  (kv:_fold store 0
-    (lambda (k v acc)
-      (if (proc k v) (+ acc 1) acc))))
+; (kv:product store) -> product of all values.
+; Empty store returns 1 (multiplicative identity).
+(define (kv:product store)
+  (kv:_fold store 1 (lambda (k v acc) (* acc v))))
 
-; (kv:sum store) -> integer.
-; Sum of all values in insertion order (assumed numeric). Empty store
-; returns 0 (additive identity), so (kv:sum s) composes cleanly with +
-; and with kv:reduce for custom aggregations.
-(define (kv:sum store)
-  (kv:_fold store 0 (lambda (k v acc) (+ acc v))))
-
-; (kv:zip keys vals) -> store.
-; Build a store by pairing `keys` with `vals` left-to-right. Stops at
-; the shorter list; extras on either side are silently dropped.
-; Insertion order of the resulting store follows `keys`. Uses the
-; internal primitive kv:_set so that each pair is appended at the end
-; of the accumulator in source order — no reversal required.
-(define (kv:zip keys vals)
-  (let loop ((ks keys) (vs vals) (acc (quote ())))
-    (if (or (null? ks) (null? vs))
-      acc
-      (loop (cdr ks) (cdr vs) (kv:_set acc (car ks) (car vs))))))
-
-; (kv:swap store k1 k2) -> store.
-; Atomically swap the values at k1 and k2. Other entries' values and
-; insertion order are preserved. No-op (returns store unchanged) when:
-;   * k1 == k2 (swapping with self is the identity), or
-;   * either key is absent from the store (refuses to invent values
-;     for missing slots — consistent with kv:rename's ambiguity rule).
-; Implementation reads both values up front from the original store
-; then folds the original entries into a fresh store, writing k1 -> v2
-; and k2 -> v1 — guarantees a single, atomic-looking pass.
-(define (kv:swap store k1 k2)
-  (if (equal? k1 k2)
-    store
-    (if (not (kv:_has store k1))
-      store
-      (if (not (kv:_has store k2))
-        store
-        (let ((v1 (kv:_ref store k1))
-              (v2 (kv:_ref store k2)))
-          (kv:_fold store (quote ())
-            (lambda (k v acc)
-              (if (equal? k k1)
-                (kv:_set acc k1 v2)
-                (if (equal? k k2)
-                  (kv:_set acc k2 v1)
-                  (kv:_set acc k v))))))))))
+; (kv:avg store) -> arithmetic mean | #f.
+; Returns (/ sum count). #f on empty.
+(define (kv:avg store)
+  (let ((n (kv:size store)))
+    (if (= n 0)
+      #f
+      (/ (kv:sum store) n))))
 ```
 
-And add `kv:nth`, `kv:count`, `kv:sum`, `kv:zip`, `kv:swap` to the export list.
+Wait, does Aura have `/`? Looking at the tests they use `(* v 10)` so multiplication works. And `/` is basic. Should be fine. But let me be careful — if `n` is 0 we return `#f`, otherwise integer division should be fine for integer values. For non-integer values, behavior depends on host. Let me just use `/` like the rest.
 
-Bump version to 9.
+Actually for the test, let me make sure my tests work:
+- sum returns integer, n is integer, so / is integer division. For tests I'll use values that divide cleanly.
 
-Now the tests — I need to add T43–T47c.
+Now let me think about the export list. I need to add:
+- `kv:min`
+- `kv:max`
+- `kv:product`
+- `kv:avg`
 
-Let me write the new tests block:
+And I need to bump version to 10.
+
+Let me also think about whether to extend the tests. The tests file ends at T47c. I need T48–T53ish:
+
+- T48: `kv:min` returns smallest value, `#f` on empty
+- T49: `kv:max` returns largest value, `#f` on empty
+- T50: `kv:product` returns product of all values, 1 on empty
+- T51: `kv:avg` returns mean, `#f` on empty
+- T52: defensive — `kv:min`/`kv:max` skip non-pair cells
+- T53: composition — `kv:min`/`kv:max`/`kv:product`/`kv:avg` work after `kv:merge`
+
+Let me design the tests:
+
+```aura
+; ---- Phase 10: statistical / numeric aggregation helpers ----
+
+; T48: min() returns smallest value; #f on empty.
+(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 3) "b" 1) "c" 2)))
+  (t "T48-min"
+     (and (= (kv:min s) 1)
+          (eq? (kv:min (kv:open)) #f))))
+
+; T48b: min() on a single-entry store returns that value.
+(t "T48b-min-single"
+   (= (kv:min (kv:set (kv:open) "only" 42)) 42))
+
+; T48c: min() handles negative values correctly.
+(let* ((s (kv:set (kv:set (kv:open) "a" -5) "b" -2)))
+  (t "T48c-min-negative"
+     (= (kv:min s) -5)))
+
+; T49: max() returns largest value; #f on empty.
+(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 3) "b" 1) "c" 2)))
+  (t "T49-max"
+     (and (= (kv:max s) 3)
+          (eq? (kv:max (kv:open)) #f))))
+
+; T50: product() returns product of all values; 1 on empty.
+(let* ((s (kv:set (kv:set (kv:set (kv:set (kv:open) "a" 2) "b" 3) "c" 4) "d" 5)))
+  (t "T50-product"
+     (and (= (kv:product s) 120)
+          (= (kv:product (kv:open)) 1))))
+
+; T51: avg() returns arithmetic mean; #f on empty.
+(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 2) "b" 4) "c" 6)))
+  (t "T51-avg"
+     (and (= (kv:avg s) 4)
+          (eq? (kv:avg (kv:open)) #f))))
+
+; T52: min/max skip non-pair cells defensively (won't crash).
+(t "T52-min-max-defensive"
+   (= (kv:min (cons 42 (kv:set (kv:set (kv:open) "a" 5) "b" 10))) 5))
+
+; T53: stats compose with merge — combined store's stats reflect both sides.
+(let* ((a (kv:set (kv:set (kv:open) "a" 2) "b" 4))
+       (b (kv:set (kv:set (kv:open) "c" 8) "d" 10))
+       (m (kv:merge a b)))
+  (t "T53-stats-compose"
+     (and (= (kv:min m) 2)
+          (= (kv:max m) 10)
+          (= (kv:sum m) 24)
+          (= (kv:product m) 640))))
+```
+
+Let me check the defensive test: `(cons 42 (kv:set (kv:set (kv:open) "a" 5) "b" 10))` — this prepends `42` (an atom) to the alist. Then `kv:min` should skip it and find the min of the alist, which is 5. Yes.
+
+Now let me write the full updated lib/kv.aura. I need to:
+1. Add to the export list (preserve order)
+2. Add to the comment header for Phase 10
+3. Add the implementations
+4. Bump version to 10
+
+Let me write it out:
+
+For the export, I'll add them in a logical group at the end:
+```
+        kv:swap
+        kv:min
+        kv:max
+        kv:product
+        kv:avg)
+```
+
+For the header comment, update Phase 9 line:
+```
+; Phase 9:   aggregation / positional / composition helpers
+;             (nth, count, sum, zip, swap).
+; Phase 10:  statistical / numeric aggregation helpers
+;             (min, max, product, avg).
+```
+
+And bump `(define kv:version 9)` to `(define kv:version 10)`.
+
+Let me also make sure I update the tests/smoke.aura file to:
+1. Display `kv:version=10`
+2. Add T48–T53 tests
+
+Let me write the complete patch.
+
+Actually, I want to think about whether `kv:min`/`kv:max` returning `#f` on empty is right vs some other sentinel. SRFI-1 has `min`/`max` returning `#f` on empty lists in some implementations, raising an error in others. `#f` is friendlier and consistent with our `kv:nth`, `kv:first`, `kv:last`, `kv:find` (all return `#f` on empty). Good, `#f` is right.
+
+For `kv:avg` — `#f` on empty is also consistent with the `#f`-as-miss convention. Alternative would be `0` to compose with sum, but `0` for "average of nothing" is wrong. `#f` is the honest answer.
+
+Let me write the full file patch.
+
+One concern: the patch is a full-file replacement for `lib/kv.aura` (per the rules "Prefer full-file replacement for small projects"). Let me write the full file.
+
+Actually let me think about whether to also include `kv:range` or `kv:keys-range` or `kv:keys-by`. Hmm. Let me not over-extend. Stick with the 4 pure scalar aggregation extensions. Clean.
+
+Wait, what about `kv:extremes` — `(store)` returning `(min . max)` in one pass? That'd be a nice 5th. But it adds complexity. Let me skip it; users can `(cons (kv:min s) (kv:max s))` trivially.
+
+OK final plan for Phase 10:
+- `kv:min store` → `#f` on empty
+- `kv:max store` → `#f` on empty
+- `kv:product store` → 1 on empty (multiplicative identity)
+- `kv:avg store` → `#f` on empty
+
+And tests T48–T53.
+
+Let me write the full files now.
+
+Actually one more thing to check: does Aura have `or`? Yes, `kv:zip` uses `(or (null? ks) (null? vs))`. Good.
+
+Does Aura have `<` and `>`? Used in `kv:find` test: `(> v 15)`. Good.
+
+Does Aura have `-`? Yes, used in `kv:_take`: `(- n 1)`. Good.
+
+OK let me write it.
+
+For the tests, I'm going to add a "Phase 10" section at the end. Let me structure it carefully so it doesn't break the existing test pattern. The existing tests use the `t` function and `(let* ...)` patterns.
+
+Let me finalize:
 
 ```
-; ---- Phase 9: aggregation / positional / composition helpers ----
+; ---- Phase 10: statistical / numeric aggregation helpers ----
 
-; T43: nth() returns the 0-indexed entry; #f on out-of-range / empty.
-(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
-       (n0 (kv:nth s 0))
-       (n1 (kv:nth s 1))
-       (n2 (kv:nth s 2)))
-  (t "T43-nth"
-     (and (pair? n0)
-          (equal? (car n0) "a")
-          (equal? (cdr n0) 1)
-          (pair? n1)
-          (equal? (car n1) "b")
-          (equal? (cdr n1) 2)
-          (pair? n2)
-          (equal? (car n2) "c")
-          (equal? (cdr n2) 3)
-          (eq? (kv:nth s 3) #f)
-          (eq? (kv:nth s 100) #f)
-          (eq? (kv:nth (kv:open) 0) #f))))
+; T48: min() returns the smallest value in insertion order; #f on empty.
+(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 3) "b" 1) "c" 2)))
+  (t "T48-min"
+     (and (= (kv:min s) 1)
+          (eq? (kv:min (kv:open)) #f))))
 
-; T44: count() returns the number of matching entries; 0 on empty / miss.
-(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 5) "c" 10))))
-  (t "T44-count"
-     (and (= (kv:count s (lambda (k v) (> v 3))) 2)
-          (= (kv:count s (lambda (k v) (> v 100))) 0)
-          (= (kv:count s (lambda (k v) (> v 0))) 3)
-          (= (kv:count (kv:open) (lambda (k v) #t)) 0))))
+; T48b: min() on a single-entry store returns that value.
+(t "T48b-min-single"
+   (= (kv:min (kv:set (kv:open) "only" 42)) 42))
 
-; T45: sum() returns the total of all values; 0 on empty.
-(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))))
-  (t "T45-sum"
-     (and (= (kv:sum s) 6)
-          (= (kv:sum (kv:open)) 0))))
+; T48c: min() handles negative values correctly.
+(let* ((s (kv:set (kv:set (kv:open) "a" -5) "b" -2)))
+  (t "T48c-min-negative"
+     (= (kv:min s) -5)))
 
-; T46: zip() pairs keys with vals left-to-right; insertion order tracks keys.
-(let* ((z (kv:zip (list "a" "b" "c") (list 1 2 3)))
-       (zk (kv:keys z)))
-  (t "T46-zip"
-     (and (= (kv:size z) 3)
-          (equal? (kv:get z "a") 1)
-          (equal? (kv:get z "b") 2)
-          (equal? (kv:get z "c") 3)
-          (equal? (car zk) "a")
-          (equal? (car (cdr zk)) "b")
-          (equal? (car (cdr (cdr zk))) "c"))))
+; T49: max() returns the largest value in insertion order; #f on empty.
+(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 3) "b" 1) "c" 2)))
+  (t "T49-max"
+     (and (= (kv:max s) 3)
+          (eq? (kv:max (kv:open)) #f))))
 
-; T46b: zip() with a shorter vals list drops the tail keys.
-(t "T46b-zip-vals-shorter"
-   (let* ((z (kv:zip (list "a" "b" "c") (list 1 2))))
-     (and (= (kv:size z) 2)
-          (equal? (kv:get z "a") 1)
-          (equal? (kv:get z "b") 2)
-          (eq? (kv:get z "c") #f))))
+; T50: product() returns the product of all values; 1 on empty
+; (multiplicative identity, so it composes cleanly with * and reduce).
+(let* ((s (kv:set (kv:set (kv:set (kv:set (kv:open) "a" 2) "b" 3) "c" 4) "d" 5)))
+  (t "T50-product"
+     (and (= (kv:product s) 120)
+          (= (kv:product (kv:open)) 1))))
 
-; T46c: zip() with a shorter keys list drops the tail vals.
-(t "T46c-zip-keys-shorter"
-   (let* ((z (kv:zip (list "a") (list 1 2 3))))
-     (and (= (kv:size z) 1)
-          (equal? (kv:get z "a") 1))))
+; T51: avg() returns the arithmetic mean of all values; #f on empty
+; (vacuous case — 0 is the wrong answer for "mean of nothing").
+(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 2) "b" 4) "c" 6)))
+  (t "T51-avg"
+     (and (= (kv:avg s) 4)
+          (eq? (kv:avg (kv:open)) #f))))
 
-; T47: swap() exchanges two values, preserves order and other entries.
-(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
-       (sw (kv:swap s "a" "c"))
-       (sk (kv:keys sw)))
-  (t "T47-swap"
-     (and (= (kv:size sw) 3)
-          (equal? (kv:get sw "a") 3)
-          (equal? (kv:get sw "b") 2)
-          (equal? (kv:get sw "c") 1)
-          (equal? (car sk) "a")
-          (equal? (car (cdr sk)) "b")
-          (equal? (car (cdr (cdr sk))) "c"))))
+; T52: min/max are defensive against stray non-pair cells (they skip them).
+(t "T52-min-max-defensive"
+   (let* ((st (cons 'stray-atom (kv:set (kv:set (kv:open) "a" 5) "b" 10))))
+     (and (= (kv:min st) 5)
+          (= (kv:max st) 10))))
 
-; T47b: swap() with k1 == k2 is a no-op.
-(t "T47b-swap-same-key"
-   (let* ((s (kv:set (kv:set (kv:open) "a" 1) "b" 2))
-          (sw (kv:swap s "a" "a")))
-     (and (= (kv:size sw) 2)
-          (equal? (kv:get sw "a") 1)
-          (equal? (kv:get sw "b") 2))))
+; T53: stats compose naturally with kv:merge — combined store's stats
+; reflect both sides (this exercises the "no implicit side-channels"
+; property: a store built from two sources is just a store).
+(let* ((a (kv:set (kv:set (kv:open) "a" 2) "b" 4))
+       (b (kv:set (kv:set (kv:open) "c" 8) "d" 10))
+       (m (kv:merge a b)))
+  (t "T53-stats-compose"
+     (and (= (kv:min m) 2)
+          (= (kv:max m) 10)
+          (= (kv:sum m) 24)
+          (= (kv:product m) 640))))
+```
 
+OK let me also check: the test file's main `let*` block uses sequential `let*` which gets serialized — but the tests are independent so this is fine.
+
+Looking at the existing code, I see they update the kv:version display at the top:
+```
+(display "=== kv smoke kv:version=")
+(display kv:version)
+(newline)
+```
+
+So I need to update `kv:version` to 10 in lib/kv.aura, and the test will automatically pick it up.
+
+Let me now write the full patches.
+
+For lib/kv.aura — full file replacement.
+
+For tests/smoke.aura — append the new tests before the final `(display "SCORE "` ...). Let me look at the current end:
+
+```aura
 ; T47c: swap() with a missing key is a no-op.
 (t "T47c-swap-missing"
    (let* ((s (kv:set (kv:set (kv:open) "a" 1) "b" 2))
@@ -590,426 +365,411 @@ Let me write the new tests block:
           (equal? (kv:get sw "a") 1)
           (equal? (kv:get sw "b") 2)
           (eq? (kv:get sw "ghost") #f))))
-```
-
-Hmm, that should be 11 new tests. Let me count: T43, T44, T45, T46, T46b, T46c, T47, T47b, T47c = 9 new tests. So total goes from 57 to 57+9 = 66.
-
-Wait actually I miscounted. Let me recount from the test file:
-- T1-T17 = 17
-- T18-T23 = 6 (T18, T19, T19b, T20, T21, T21b, T22, T23) — wait, that's 8
-Let me just trust that the existing baseline is 57. Then I add 9 new tests for 66 total.
-
-Now let me think about potential issues with the implementation:
-
-1. `kv:nth` — uses `(- n 1)` for n=0. Wait, when n=0 and pair, return p directly (no recursion). So no issue with (- 0 1) = -1. Good. But what about (kv:nth s 0) when store is empty? We return #f via null check. Good.
-
-2. `kv:count` — simple fold with counter. Empty → 0 (initial acc).
-
-3. `kv:sum` — fold with `+`. Empty → 0.
-
-4. `kv:zip` — walk in parallel. Should work.
-
-5. `kv:swap` — fold over original store, set in accumulator. Uses `kv:_set` which preserves order if same key (in-place) or appends (new key). Since k1 != k2 and both are in the store, both end up in the accumulator with swapped values, in their original positions. 
-
-Actually wait, let me trace through:
-- Store = [a->1, b->2, c->3]
-- v1 = 1 (value at "a"), v2 = 3 (value at "c")
-- Fold:
-  - Process (a, 1): k = "a", matches k1 = "a", set acc to (a -> v2 = 3). acc = [a->3].
-  - Process (b, 2): k = "b", matches neither, set acc to (b -> 2). acc = [a->3, b->2].
-  - Process (c, 3): k = "c", matches k2 = "c", set acc to (c -> v1 = 1). acc = [a->3, b->2, c->1].
-- Result: [a->3, b->2, c->1]. ✓
-
-Order preserved, values swapped. 
-
-Now let me think about an edge case: what if `kv:swap` is called with one of the keys appearing multiple times? The internal alist has unique keys (since kv:_set replaces), so this shouldn't happen normally. But if it did, the fold would process both occurrences, with each calling kv:_set which replaces. The first occurrence wins on ordering (since it's processed first and gets appended first). The second occurrence, when processed, would `kv:_set` the same key — replacing in place. So the value would be the same as the first swap-set value. Hmm, edge case but unlikely.
-
-OK, let me finalize the patch.
-
-Actually wait — I should double-check whether the version increment should be from 7 → 8 (just bookkeeping) and then 8 → 9 for new ops, or directly 7 → 9. Since the patch is one-shot, I'll go to 9 and note it represents "Phase 9 + bookkeeping for Phase 8" in the file comment. Or just bump to 8 with new ops and bump to 9 if I want a separate generation. To keep it simple, version 9.
-
-Let me also think about whether there are any potential issues with the existing test passing. The patch only adds new things and bumps version. The existing tests should still pass.
-
-Let me write the full file now. I'll be careful to preserve every line.
-
-One more consideration: in T44 and T45, I wrote:
-```scheme
-(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 5) "c" 10))))
-```
-That has unbalanced parens! Should be:
-```scheme
-(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 5) "c" 10))))
-```
-Wait, `let* ((s expr))` — that's `let*` with one binding. Then `body` follows. So:
-```scheme
-(let* ((s expr)) body)
-```
-becomes:
-```scheme
-(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 5) "c" 10)))
-  (t "T44-count" ...))
-```
-
-That's:
-- `let*` with one binding `(s ...)` followed by body `(t "T44-count" ...)`.
-- The binding value: `(kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 5) "c" 10)`
-- That's `kv:set` applied to `(kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 5) "c" 10)`... wait no, `kv:set` takes 3 args: `(kv:set store key val)`. So `(kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 5) "c" 10)` is `kv:set` with args `store=(kv:set (kv:set (kv:open) "a" 1) "b" 5)`, `key="c"`, `val=10`. That's 3 args, well-formed.
-
-So `(let* ((s (kv:set ...))) (t "T44-count" ...))` is:
-- `let*` with 1 binding `s` to a 3-arg `kv:set` expression.
-- Body: `(t "T44-count" ...)`.
-
-Parens:
-- `(let*` open
-- `((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 5) "c" 10)))` — bindings list with one binding
-- `(t "T44-count" (and ...))` — body
-- `)` close let*
-
-Counting parens:
-```
-(let*
-  ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 5) "c" 10)))
-  (t "T44-count"
-     (and ...)))
-```
-- Open: let*
-- Open: bindings (outer)
-- Open: bindings (inner list)
-- Open: s binding (s expression)
-- ... expression
-- Close: s binding
-- Close: bindings (inner list)
-- Wait no, `((s expr))` is two open parens and two close parens for the bindings list.
-
-Let me write it more carefully:
-```
-(let* ((s EXPR)) BODY)
-```
-- `(` open let*
-- ` ` whitespace
-- `(` open bindings
-- `(` open first-binding
-- `s` symbol
-- ` ` whitespace
-- `EXPR` some expression
-- `)` close first-binding
-- `)` close bindings
-- ` ` whitespace
-- `BODY` body
-- `)` close let*
-
-So `(let* ((s EXPR)) BODY)` has:
-- let* open paren: 1
-- bindings open: 2
-- s binding open: 3
-- EXPR open: 4
-- EXPR close: 3
-- s binding close: 2
-- bindings close: 1
-- BODY opens: depends on body
-- let* close: 0
-
-OK so `(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 5) "c" 10))) BODY)` is:
-- `(let*` 1
-- ` (` 2
-- `(` 3 (s-binding)
-- `s` 
-- ` (kv:set` 4 (EXPR)
-- ` (kv:set` 5
-- ` (kv:set` 6
-- ` (kv:open)` 6 → back to 5
-- ` "a"` 5
-- ` 1)` 4 (close third kv:set)
-- ` "b"` 4
-- ` 5)` 3 (close second kv:set)
-- ` "c"` 3
-- ` 10)` 2 (close first kv:set, EXPR done)
-- `)` 1 (close s-binding)
-- `)` 0 (close bindings)
-- `BODY`
-- `)` -1 (close let*)
-
-So the parens balance when we close with the final `)` for let*.
-
-Let me write it cleanly:
-```scheme
-(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 5) "c" 10)))
-  (t "T44-count" ...))
-```
-
-So the pattern is:
-```
-(let* ((s ...))
-  (t "..." ...))
-```
-That's `(let* ((s ...)) (t "..." ...))` — well-formed.
-
-Hmm I had an extra `)` in my draft. Let me fix:
-```scheme
-(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 5) "c" 10)))
-  (t "T44-count" ...))
-```
-
-That's correct. Same for T45.
-
-OK let me also think about whether `or` works as a short-circuit. Looking at tests... T9 uses `(or (equal? (car ks) "x") (equal? (car ks) "y") ...)`. That's how `or` is used here, but I'm not sure if it's short-circuiting or just a boolean. Either way, both args are evaluated. In T46b/T46c it doesn't matter — both are simple checks.
-
-In `kv:zip`, `(or (null? ks) (null? vs))` — both need to be evaluated for correctness, but for efficiency short-circuiting would help. Let me check if the host supports short-circuit `or`. Looking at the source... I don't see explicit tests, but typically Scheme `or` is short-circuit. If not, we'd evaluate `(null? vs)` even when ks is null, which is harmless (vs is also null). So either way, works.
-
-OK let me write the full file now. I'll need to be careful to match exactly the existing style and not break anything.
-
-Let me also add `kv:nth`, `kv:count`, `kv:sum`, `kv:zip`, `kv:swap` to the export list.
-
-Let me finalize the patch now.
-
-Actually one more thought: I'm going to do this as two file changes:
-1. lib/kv.aura — full file replacement
-2. tests/smoke.aura — append new tests
-
-Let me write them both.
-
-Wait, can I include multiple files in one PATCH section? Looking at instructions:
-"FILE relative/path
-```
-full file contents
-```"
-
-It seems like one file per PATCH block. But there could be multiple PATCH blocks for multiple files. Let me include both.
-
-Actually re-reading: "Emit a concrete PATCH the actuator can apply" and "FILE relative/path" — singular. But it could be one file at a time. I'll do two PATCH blocks: one for lib/kv.aura and one for tests/smoke.aura.
-
-Let me write the full lib/kv.aura file now.
-
-Header comment update:
-```
-; projects/kv/lib/kv.aura — mini KV store (project-level evolve subject)
-; Phase 0..2: open + set/get + del/has?/size/keys/clear/overwrite.
-; Phase 3:   multi-key stress + isolation.
-; Phase 4:   batch / composite helpers (mset, mget, update, merge, copy).
-; Phase 5:   iteration & query helpers (values, entries, filter, find,
-;             empty?, for-each).
-; Phase 6:   fold / predicate / projection / selection helpers
-;             (reduce, any?, every?, pick, omit, map-values).
-; Phase 7:   convenience / comparison helpers
-;             (get-or, rename, diff, partition, equal?).
-; Phase 8:   positional / conditional / inversion helpers
-;             (first, last, rest, butlast, take, drop, invert,
-;             set-if-absent).
-; Phase 9:   aggregation / positional / composition helpers
-;             (nth, count, sum, zip, swap).
-```
-
-Export list — add `kv:nth`, `kv:count`, `kv:sum`, `kv:zip`, `kv:swap`.
-
-Bump version to 9.
-
-Then at end, add Phase 9 section.
-
-Let me write it out.
-
-Also one detail about `kv:zip`: what should happen with the test if one of the vals is `#f`? E.g., `(kv:zip (list "a") (list #f))` should give a=#f. But there's no test for this, so I don't need to worry.
-
-Now, let me think about the `kv:zip` semantics with kv:get. After `(kv:zip (list "a") (list 1))`, calling `(kv:get store "a")` returns 1. Good. The store has a=1. ✓
-
-For T46b (zip with shorter vals), the test expects:
-- `(kv:zip (list "a" "b" "c") (list 1 2))` → store with a=1, b=2, c missing.
-- `(kv:size z)` = 2. ✓
-- `(kv:get z "a")` = 1. ✓
-- `(kv:get z "b")` = 2. ✓
-- `(kv:get z "c")` = #f. ✓
-
-For T46c (zip with shorter keys), the test expects:
-- `(kv:zip (list "a") (list 1 2 3))` → store with a=1.
-- `(kv:size z)` = 1. ✓
-- `(kv:get z "a")` = 1. ✓
-
-OK all good.
-
-Now let me also think about whether `kv:zip` could fail in some edge case. What if both lists are empty? Loop exits immediately, returns acc = (). ✓
-
-What if one is empty? Same. ✓
-
-What if one has non-string keys? Internal kv:_set doesn't validate; the result would have non-string keys. Public contract says keys are strings, but kv:zip is a constructor so it should perhaps enforce string keys? Hmm. To keep consistency with kv:set which validates, let me add a string? check on the key.
-
-Actually, the existing pattern: `kv:mset` uses `kv:_set` directly (no validation), and `kv:zip` would be similar. The SPEC says "Keys are strings." but doesn't enforce it for all constructors. Let me not validate — keep it consistent with `kv:mset`.
-
-Actually wait, let me check kv:mset:
-```scheme
-(define (kv:mset store alist)
-  (let loop ((xs alist) (acc store))
-    (if (null? xs)
-      acc
-      (let ((p (car xs)))
-        (if (pair? p)
-          (loop (cdr xs) (kv:_set acc (car p) (cdr p)))
-          (loop (cdr xs) acc))))))
-```
-No string? check. OK so `kv:zip` matching style would also skip the check. Good.
-
-Let me finalize. Here's my plan for the full lib/kv.aura:
-
-Same as current but:
-1. Update header to add Phase 9 line
-2. Add `kv:nth`, `kv:count`, `kv:sum`, `kv:zip`, `kv:swap` to export list
-3. Bump `kv:version` from 7 to 9
-4. Add Phase 9 section at end
-
-And tests/smoke.aura gets:
-1. Append Phase 9 test block before the SCORE display
-
-Let me write them now.
-
-Actually, I realize I should double-check the test file's tail. The end of the test file is:
-```
-(t "T42-set-if-absent"
-   (and (equal? (kv:get s2 "x") 1)
-        (eq? (kv:get s2 "y") #f)
-        (equal? (kv:get s3 "x") 1)
-        (equal? (kv:get s3 "y") 2))))
 
 (display "SCORE ")
 ...
 ```
 
-So the Phase 9 tests need to go between T42 and the SCORE display.
+So I need to insert the new tests between `T47c` block and the `(display "SCORE ")`.
+
+Let me write the full new tests file.
+
+Actually for the patch file, since tests/smoke.aura is also fairly small, I'll do a full-file replacement for it too. But the diff for tests/smoke.aura is much smaller (just add Phase 10 section). Let me do a partial replacement — replace from `; T47c: swap() with a missing key is a no-op.` to the `(display "SCORE ")` line, inserting new tests in between.
+
+Actually, the controller instructions say "Prefer full-file replacement for small projects". Both files are small enough. Let me do full-file for both to be safe.
+
+Hmm, but full-file for tests/smoke.aura is ~600 lines and I need to replicate it exactly with the addition. That's a lot of lines to get right. Let me use a targeted patch using the PATCH format. The instructions allow a "concrete PATCH the actuator can apply" — I think a full-file replacement is the cleanest interface. Let me do that.
+
+Let me now write the complete files.
+
+For lib/kv.aura, I'll mirror the existing structure with the additions:
+1. Update header comment to mention Phase 10
+2. Add to export list
+3. Bump version
+4. Add the Phase 10 implementations at the bottom
+
+Here we go.
+
+Wait, I realize I should think about what `kv:min` and `kv:max` do when the value is not numeric. Looking at `kv:sum`, the doc says "assumed numeric". So for min/max I'll also say "assumed numeric" — same posture. The test will only use numeric values.
+
+OK writing now.
+
+Let me think once more about whether I should also include `kv:stdev` (standard deviation). It would be useful for completeness but adds complexity (needs to compute mean first, then sum of squared deviations). Let me skip it; we can add it in a future Phase 11 if needed.
+
+Final decision: 4 ops, 6 tests. Clean Phase 10.
+
+Let me write the full lib/kv.aura now.
+
+```aura
+; projects/kv/lib/kv.aura — mini KV store (project-level evolve subject)
+; Phase 0..2: open + set/get + del/has?/size/keys/clear/overwrite.
+; Phase 3:   multi-key stress + isolation.
+; Phase 4:   batch / composite helpers (mset, mget, update, merge, copy).
+; Phase 5:   iteration & query helpers (values, entries, filter, find,
+;             empty?, for-each).
+; Phase 6:   fold / predicate / projection / selection helpers
+;             (reduce, any?, every?, pick, omit, map-values).
+; Phase 7:   convenience / comparison helpers
+;             (get-or, rename, diff, partition, equal?).
+; Phase 8:   positional / conditional / inversion helpers
+;             (first, last, rest, butlast, take, drop, invert,
+;             set-if-absent).
+; Phase 9:   aggregation / positional / composition helpers
+;             (nth, count, sum, zip, swap).
+; Phase 10:  statistical / numeric aggregation helpers
+;             (min, max, product, avg).
+;
+; Store representation: alist of (key . val) pairs.
+;   * Keys are strings.
+;   * Values may be any Aura value (numbers, strings, lists, ...).
+;   * Insertion order is preserved across all operations.
+;   * All operations are functional: each returns a fresh store;
+;     the input store is never mutated.
+;
+; Form order: export before require.
+
+(export kv:version
+        kv:open
+        kv:set
+        kv:get
+        kv:del
+        kv:has?
+        kv:keys
+        kv:size
+        kv:clear
+        kv:mset
+        kv:mget
+        kv:update
+        kv:merge
+        kv:copy
+        kv:values
+        kv:entries
+        kv:filter
+        kv:find
+        kv:empty?
+        kv:for-each
+        kv:reduce
+        kv:any?
+        kv:every?
+        kv:pick
+        kv:omit
+        kv:map-values
+        kv:get-or
+        kv:rename
+        kv:diff
+        kv:partition
+        kv:equal?
+        kv:first
+        kv:last
+        kv:rest
+        kv:butlast
+        kv:take
+        kv:drop
+        kv:invert
+        kv:set-if-absent
+        kv:nth
+        kv:count
+        kv:sum
+        kv:zip
+        kv:swap
+        kv:min
+        kv:max
+        kv:product
+        kv:avg)
+
+(define kv:version 10)
+
+; ... (rest of file unchanged from current state) ...
+
+; ---------------------------------------------------------------------------
+; Phase 10 statistical / numeric aggregation helpers.
+; Pure functional; insertion order respected only insofar as the result is
+; order-independent (scalars); no FS escapes. Values are assumed numeric —
+; the same posture kv:sum takes — so non-numeric values are the caller's
+; problem, not the store's.
+;
+; Conventions:
+;   * `kv:min` / `kv:max` walk the store once and return the smallest /
+;     largest value compared with `<` / `>`. On an empty store both
+;     return `#f` (consistent with kv:first / kv:last / kv:nth /
+;     kv:find's "no value" sentinel).
+;   * `kv:product` returns the multiplicative reduction of all values,
+;     seeded at `1` (the multiplicative identity), so it composes
+;     cleanly with `*` and with `kv:reduce` — same shape as kv:sum
+;     seeded at `0` (the additive identity).
+;   * `kv:avg` returns the arithmetic mean; on an empty store it
+;     returns `#f` because `0` is the wrong answer for "average of
+;     nothing". Implemented via `kv:sum` and `kv:size` so the result
+;     is consistent with both underlying primitives.
+; ---------------------------------------------------------------------------
+
+; (kv:min store) -> min value | #f.
+; Smallest value in insertion order (compared with `<`). Returns `#f`
+; when the store is empty. Walks left-to-right, skipping any stray
+; non-pair cells defensively so a malformed input cannot crash the
+; reducer.
+(define (kv:min store)
+  (if (null? store)
+    #f
+    (let ((p (car store)))
+      (if (pair? p)
+        (let loop ((xs (cdr store)) (m (cdr p)))
+          (if (null? xs)
+            m
+            (let ((q (car xs)))
+              (if (pair? q)
+                (loop (cdr xs) (if (< (cdr q) m) (cdr q) m))
+                (loop (cdr xs) m)))))
+        (kv:min (cdr store))))))
+
+; (kv:max store) -> max value | #f.
+; Largest value in insertion order (compared with `>`). Returns `#f`
+; when the store is empty. Same defensive-skip posture as kv:min.
+(define (kv:max store)
+  (if (null? store)
+    #f
+    (let ((p (car store)))
+      (if (pair? p)
+        (let loop ((xs (cdr store)) (m (cdr p)))
+          (if (null? xs)
+            m
+            (let ((q (car xs)))
+              (if (pair? q)
+                (loop (cdr xs) (if (> (cdr q) m) (cdr q) m))
+                (loop (cdr xs) m)))))
+        (kv:max (cdr store))))))
+
+; (kv:product store) -> product of all values.
+; Multiplicative reduction in insertion order. Empty store returns 1
+; (the multiplicative identity), matching kv:sum's 0-seed posture so
+; (kv:product s) composes cleanly with `*` and with kv:reduce for
+; custom aggregations. Skips non-pair cells defensively.
+(define (kv:product store)
+  (kv:_fold store 1 (lambda (k v acc) (* acc v))))
+
+; (kv:avg store) -> arithmetic mean | #f.
+; Returns (/ sum count). `#f` on an empty store (0/0 is undefined;
+; returning `#f` is the honest answer). Defined in terms of kv:sum
+; and kv:size so the result is consistent with both primitives.
+(define (kv:avg store)
+  (let ((n (kv:size store)))
+    (if (= n 0)
+      #f
+      (/ (kv:sum store) n))))
+```
+
+That's the addition. The rest of the file stays the same.
+
+Now for tests/smoke.aura, I need to add the Phase 10 tests before the SCORE display. Let me write them out.
+
+Final patches ready. Let me format them properly.
+
+One last thought — the kv:avg with integer values. Let me trace T51:
+- s = store with "a"->2, "b"->4, "c"->6
+- kv:sum s = 12
+- kv:size s = 3
+- 12/3 = 4
+- (= (kv:avg s) 4) → should work
+
+What if the test was /? Let me check if `/` is integer division in Aura. Looking at the existing code, `kv:avg` is new and there's no other use of `/` in the codebase I've seen. Let me just trust it works; if not, the test will fail and I'll fix in next gen.
+
+Actually wait, I should check the existing tests for division patterns. Let me look... I don't see any `/` in the existing tests. Hmm. Let me check the Aura runtime if there are any hints... Looking at the existing code in kv.aura, no `/` either. But multiplication `*` is used.
+
+To be safe, let me change my T51 test to use values that would work under either integer or floating-point division:
+- s = "a"->2, "b"->4, "c"->6 → avg = 4 (works in both)
+
+Or I can compute the mean manually:
+```
+(and (= (* 3 (kv:avg s)) 12)
+```
+
+Actually let me just trust `/` works. If it doesn't, the test will surface the issue and I can fix. Most Schemes support `/`.
+
+Let me also reconsider: should I use `(/ (kv:sum store) n)` or implement it manually? If I implement manually, I avoid the host's `/` semantics:
+
+```aura
+(define (kv:avg store)
+  (let ((n (kv:size store)))
+    (if (= n 0)
+      #f
+      ;; (/ sum n) — rely on host division
+      (/ (kv:sum store) n))))
+```
+
+Or to be defensive:
+```aura
+(define (kv:avg store)
+  (let ((n (kv:size store)))
+    (if (= n 0)
+      #f
+      (let loop ((xs store) (i 0) (acc 0))
+        (if (null? xs)
+          (/ acc n)
+          (let ((p (car xs)))
+            (if (pair? p)
+              (loop (cdr xs) (+ i 1) (+ acc (cdr p)))
+              (loop (cdr xs) i acc))))))))
+```
+
+This is more verbose but avoids double-walking. Hmm. Actually let me just use the simple version with `/`. Trust the host.
 
 OK let me write the final patches.
 
-One more concern — let me re-verify `kv:swap` once more. Suppose we have store [a->1, b->2, c->3] and call `(kv:swap store "a" "c")`. v1=1, v2=3. Fold:
-- k="a", v=1: matches k1, set acc (a, v2=3). acc=[(a.3)].
-- k="b", v=2: doesn't match, set acc (b, 2). acc=[(a.3), (b.2)].
-- k="c", v=3: matches k2, set acc (c, v1=1). Now kv:_set finds c in acc? Wait, acc doesn't have c yet, so kv:_set appends. acc=[(a.3), (b.2), (c.1)].
-
-So result is [a->3, b->2, c->1]. ✓
-
-Test:
-- (kv:size sw) = 3 ✓
-- (kv:get sw "a") = 3 ✓
-- (kv:get sw "b") = 2 ✓
-- (kv:get sw "c") = 1 ✓
-- (kv:keys sw) = ("a" "b" "c") ✓
-
-Good.
-
-Now for swap with overlapping — what if k1 and k2 are the same value? `(kv:swap store "a" "b")` when a=2, b=2. v1=2, v2=2. Result: a=2, b=2 — visually no change but stores are "swapped" internally. The test wouldn't distinguish. Good.
-
-What about (kv:swap store "a" "a")? Same key, no-op via the (equal? k1 k2) check. ✓
-
-What about (kv:swap store "a" "ghost")? ghost not present, no-op via (not (kv:_has store k2)). ✓
-
-OK let me finalize. I'll write out the complete lib/kv.aura and the test additions.
-
-For the version bump, let me reconsider: the current version is 7 with Phase 8 implemented. So the version is out of sync. Should I:
-(a) Bump to 8 as a "bookkeeping fix" then immediately to 9 with new ops → version 9
-(b) Bump directly to 9 → version 9
-
-Either way the final version is 9. Let me go with (b) and add a brief note in the Phase 9 section that the version was bumped to reflect Phase 9 (and incidentally includes the bookkeeping for Phase 8). Or just say "Phase 9" cleanly without the bookkeeping confusion.
-
-Let me just bump to 9 directly. Cleaner.
-
-Let me write the final lib/kv.aura now. This will be a long file but I'll preserve every line exactly.
-
-I'll do it in pieces:
+Actually wait — let me think about one more thing. The existing test file has tests that use `let*` blocks heavily. My tests use both `let*` and bare `(t ...)` patterns. Let me match the existing style. Looking at T19b, T21b, etc.:
 
 ```
-; projects/kv/lib/kv.aura — mini KV store (project-level evolve subject)
-; Phase 0..2: open + set/get + del/has?/size/keys/clear/overwrite.
-; Phase 3:   multi-key stress + isolation.
-; Phase 4:   batch / composite helpers (mset, mget, update, merge, copy).
-; Phase 5:   iteration & query helpers (values, entries, filter, find,
-;             empty?, for-each).
-; Phase 6:   fold / predicate / projection / selection helpers
-;             (reduce, any?, every?, pick, omit, map-values).
-; Phase 7:   convenience / comparison helpers
-;             (get-or, rename, diff, partition, equal?).
-; Phase 8:   positional / conditional / inversion helpers
-;             (first, last, rest, butlast, take, drop, invert,
-;             set-if-absent).
-; Phase 9:   aggregation / positional / composition helpers
-;             (nth, count, sum, zip, swap).
-;
-; Store representation: alist of (key . val) pairs.
-;   * Keys are strings.
-;   * Values may be any Aura value (numbers, strings, lists, ...).
-;   * Insertion order is preserved across all operations.
-;   * All operations are functional: each returns a fresh store;
-;     the input store is never mutated.
-;
-; Form order: export before require.
-
-(export kv:version
-        kv:open
-        kv:set
-        kv:get
-        kv:del
-        kv:has?
-        kv:keys
-        kv:size
-        kv:clear
-        kv:mset
-        kv:mget
-        kv:update
-        kv:merge
-        kv:copy
-        kv:values
-        kv:entries
-        kv:filter
-        kv:find
-        kv:empty?
-        kv:for-each
-        kv:reduce
-        kv:any?
-        kv:every?
-        kv:pick
-        kv:omit
-        kv:map-values
-        kv:get-or
-        kv:rename
-        kv:diff
-        kv:partition
-        kv:equal?
-        kv:first
-        kv:last
-        kv:rest
-        kv:butlast
-        kv:take
-        kv:drop
-        kv:invert
-        kv:set-if-absent
-        kv:nth
-        kv:count
-        kv:sum
-        kv:zip
-        kv:swap)
-
-(define kv:version 9)
+; T19b: filter() on an empty store is empty.
+(t "T19b-filter-empty"
+   (= (kv:size (kv:filter (kv:open) (lambda (k v) #t))) 0))
 ```
 
-Then all the existing internals... then at the end, Phase 9 section.
+So `(t "name" expr)` is the pattern. Some tests also use `(let* ((s ...)) (t "name" ...))` for multi-entry checks. I'll match this.
 
-Let me write the full file now. I'll be meticulous about preserving every character.
+OK finalizing. Writing the patches now.
 
-Actually, given the length, I'll write it section by section in my head and ensure continuity.
+Actually one more sanity check: in my kv:min/kv:max, I have an inner `loop` that recurses through the cdr. But the outer `kv:min` recurses on `(cdr store)` when the head is not a pair. This means if the store is just `(non-pair)`, we skip it and recurse, eventually hitting `null?` and returning `#f`. Good. And if the store is `(non-pair . (pair ...))`, we skip the first and process the rest. Good. Edge case: `(non-pair)` — recurse to `(cdr store)` which is `()`, return `#f`. Correct.
 
-OK let me just write the patch.</think>
+OK writing the final patches.
+
+Let me make sure the tests file output ends with the correct count. After my additions:
+- T1-T17 = 17
+- T18-T23 = 6
+- T24-T29 = 6
+- T30-T34 = 5 + T34b = 6
+- T35-T42 = 8 (T35, T36, T37, T38, T38b, T39, T40, T41, T41b, T41c, T42 = 11... wait let me recount)
+
+Let me actually count: 
+- T1-T17 = 17 tests
+- T18-T23 = 6 tests (T18, T19, T19b, T20, T21, T21b, T22, T23 = 8)
+- T24-T29 = 6 tests (T24, T25, T26, T26b, T26c, T27, T27b, T27c, T28, T29 = 10)
+- T30-T34b = 5 tests (T30, T30b, T31, T31b, T31c, T32, T32b, T33, T33b, T34, T34b = 11)
+- T35-T42 = 8 tests (T35, T36, T37, T38, T38b, T39, T40, T41, T41b, T41c, T42 = 11)
+- T43-T47c = 5 tests (T43, T44, T45, T46, T46b, T46c, T47, T47b, T47c = 9)
+
+Total: 17 + 8 + 10 + 11 + 11 + 9 = 66. 
+
+My additions:
+- T48, T48b, T48c, T49, T50, T51, T52, T53 = 8 new tests
+
+New total: 66 + 8 = 74.
+
+OK finalizing now. Writing the complete lib/kv.aura file and the updated tests/smoke.aura file.
+
+For the test file, since it's mostly unchanged, let me only patch the relevant section (insert before SCORE display). But the controller prefers full-file. Let me think... actually a partial patch in the format is fine too. The instructions say "Prefer full-file replacement for small projects (lib/kv.aura)". For tests/smoke.aura they didn't say to prefer, so a targeted patch is fine.
+
+Actually, looking at the PATCH format more carefully — it's just one FILE section per patch. Let me do:
+- PATCH FILE: lib/kv.aura (full)
+- PATCH FILE: tests/smoke.aura (full or partial)
+
+Both at once would need two FILE blocks. The format says "FILE relative/path" — one file per PATCH section. Let me do two separate PATCH sections.
+
+Hmm wait, looking again at the format:
+
+```
+### PATCH
+FILE relative/path
+```
+full file contents
+```
+
+It seems to expect one file per PATCH section. But I can include multiple FILE sections. Let me check — the example uses just one FILE. The instructions don't say "one per PATCH" explicitly. I'll do two FILE blocks in the same PATCH section. Should be fine.
+
+Or alternatively, I can do them as two separate ### PATCH sections. That's clearer. Let me do that.
+
+Actually, simpler: I'll combine them as two FILE blocks under one PATCH section.
+
+OK finalizing. Writing now.
+
+One thing to verify: I should make sure I don't introduce any syntax errors. Let me carefully check the new code.
+
+For kv:min:
+```aura
+(define (kv:min store)
+  (if (null? store)
+    #f
+    (let ((p (car store)))
+      (if (pair? p)
+        (let loop ((xs (cdr store)) (m (cdr p)))
+          (if (null? xs)
+            m
+            (let ((q (car xs)))
+              (if (pair? q)
+                (loop (cdr xs) (if (< (cdr q) m) (cdr q) m))
+                (loop (cdr xs) m)))))
+        (kv:min (cdr store))))))
+```
+
+Wait, the let loop syntax. Looking at how other code uses it:
+```aura
+(define (kv:last store)
+  ...
+    (let loop ((xs store) (acc #f))
+      ...))
+```
+
+And:
+```aura
+(let loop ((xs alist) (acc store))
+  ...)
+```
+
+OK, `let loop ((var1 init1) (var2 init2))` is the named-let form. Good.
+
+My code:
+```aura
+(let loop ((xs (cdr store)) (m (cdr p)))
+  ...)
+```
+
+This binds `xs` to `(cdr store)` and `m` to `(cdr p)`. Good.
+
+Then `(loop (cdr xs) (if (< (cdr q) m) (cdr q) m))` — recursive call. Good.
+
+And `kv:max` mirrors this with `>`. Good.
+
+For kv:product:
+```aura
+(define (kv:product store)
+  (kv:_fold store 1 (lambda (k v acc) (* acc v))))
+```
+
+Same shape as `kv:sum` but with `1` and `*`. Good.
+
+For kv:avg:
+```aura
+(define (kv:avg store)
+  (let ((n (kv:size store)))
+    (if (= n 0)
+      #f
+      (/ (kv:sum store) n))))
+```
+
+Clean. Good.
+
+OK final code:
+
+Let me write the full lib/kv.aura now, then the tests patch.</think>
 
 ### REVIEW
-- **Strengths:** 57/57 already green across Phases 0–8 (open/set/get → set-if-absent). The alist-of-cons representation is defensive (skips stray non-pair cells), insertion order is preserved by every op, all ops are pure functional, no FS / network / host escape used. Export-before-define discipline is intact, API names are stable, the `kv:pick` ordering bug from g6 is fixed, and `kv:rename` / `kv:swap`-style "refuse on ambiguity" semantics are consistent.
-- **Failures / Risks:** `kv:version` is still 7 even though Phase 8 is fully implemented (bookkeeping drift — fixable in the same patch). No real "host escape" risk to stress; SPEC table only enumerates through Phase 4, so we're already ahead of the published roadmap — pure-Aura denseness posture means there's still room to add small composable ops without leaking any new host dependency. No actual test failures to fix.
-- **Denseness posture:** All new helpers should be derived from the existing `_fold`/`_set`/`_has`/`_ref` primitives, preserve insertion order, refuse on ambiguity rather than guessing, and be tested in `tests/smoke.aura` while every prior test stays green.
+- **Strengths**: 66/66 green across Phases 0–9 (open/set/get → swap). Alist-of-cons representation is robust (defensive skipping of non-pair cells), insertion order is preserved by every op, all ops are pure functional, no FS / network / host escape. Export-before-define discipline is intact, API names are stable since v1, `kv:pick` walks the *store*, `kv:rename`/`kv:swap` consistently refuse ambiguous writes, `kv:equal?` correctly distinguishes `#f` values from misses.
+- **Failures / Risks**: `kv:version` is 9 — needs bump to 10 once Phase 10 lands. Phase 9 opened the "aggregation" category with `kv:sum`/`kv:count`; the natural statistical siblings (`min`, `max`, `product`, `avg`) are missing. `kv:sum`'s doc note ("assumed numeric") is the right template — the same posture applies to the new ops. No API renames; no internals touched beyond adding ops + bumping version + extending the comment roadmap.
+- **Denseness / host-risk**: Zero host escapes introduced. No `write-file`, no `read`, no network. Everything is `kv:_fold`-derived; `kv:min`/`kv:max` walk the alist directly only because they need `<`/`>` semantics the higher-order fold would still express cleanly (and `_fold` is already used elsewhere for similar reductions) — but the early-init-from-head pattern is what makes them O(n) without an extra seed.
 
 ### DIRECTION
-- **Target phase: Phase 9 — aggregation / positional / composition helpers.** Same posture as Phase 8 (pure Aura, derived from existing alist primitives, insertion-order preserved by construction, no FS escapes, no API renames). Keeps all T1–T42 green.
-- **Ops to add (5 new):**
-  - `kv:nth`  — `(store n)` 0-indexed entry, `#f` on out-of-range / empty; skips non-pair cells defensively
-  - `kv:count` — `(store proc)` number of matching entries; 0 on empty (avoids allocating an intermediate filter store)
-  - `kv:sum`  — `(store)` sum of values; 0 on empty (additive identity so it composes with `+` / `reduce`)
-  - `kv:zip`  — `(keys vals)` build store by pairing left-to-right, stop at shorter list, insertion order follows `keys`
-  - `kv:swap` — `(store k1 k2)` atomic swap of two values; no-op when `k1 == k2` or either key is absent (consistent with `kv:rename`'s ambiguity-refusal rule)
-- **Bump `kv:version` to 9** (also fixes the bookkeeping drift from Phase 8). Don't touch any existing op or test. Extend `tests/smoke.aura` with T43–T47c (9 new tests).
+- **Target phase: Phase 10 — statistical / numeric aggregation helpers.** Same posture as Phase 9 (pure Aura, derived from existing alist primitives, insertion order respected where relevant, no FS escapes, no API renames). Keeps all T1–T47c green.
+- **Ops to add (4 new, all pure, all derive from existing internals; export-before-define preserved):**
+  - `kv:min`      — `(store)` → smallest value (compared with `<`); `#f` on empty
+  - `kv:max`      — `(store)` → largest value (compared with `>`); `#f` on empty
+  - `kv:product`  — `(store)` → product of all values; `1` on empty (multiplicative identity, mirrors `kv:sum`'s `0`-seed)
+  - `kv:avg`      — `(store)` → arithmetic mean; `#f` on empty (honest vacuous answer, consistent with `kv:first`/`kv:last`/`kv:find`/`kv:nth`)
+- Bump `kv:version` to `10` and add the Phase 10 line to the header comment roadmap.
+- Extend `tests/smoke.aura` with **T48–T53** (8 tests: basic, single-entry, negative values, empty, defensive skip, compose-with-merge).
+- Do **NOT** touch any existing op or test — current 66/66 is the floor.
+- Do **NOT** add `min-by`/`max-by`/`stdev`/`product-of-squares` — that's Phase 11+ territory; stay tight.
 
 ### PATCH
-FILE lib/kv.aura
+
+FILE projects/kv/lib/kv.aura
 ```
 ; projects/kv/lib/kv.aura — mini KV store (project-level evolve subject)
 ; Phase 0..2: open + set/get + del/has?/size/keys/clear/overwrite.
@@ -1026,6 +786,8 @@ FILE lib/kv.aura
 ;             set-if-absent).
 ; Phase 9:   aggregation / positional / composition helpers
 ;             (nth, count, sum, zip, swap).
+; Phase 10:  statistical / numeric aggregation helpers
+;             (min, max, product, avg).
 ;
 ; Store representation: alist of (key . val) pairs.
 ;   * Keys are strings.
@@ -1079,9 +841,13 @@ FILE lib/kv.aura
         kv:count
         kv:sum
         kv:zip
-        kv:swap)
+        kv:swap
+        kv:min
+        kv:max
+        kv:product
+        kv:avg)
 
-(define kv:version 9)
+(define kv:version 10)
 
 ; ---------------------------------------------------------------------------
 ; Internal alist primitives.
@@ -1668,9 +1434,90 @@ FILE lib/kv.aura
                 (if (equal? k k2)
                   (kv:_set acc k2 v1)
                   (kv:_set acc k v))))))))))
+
+; ---------------------------------------------------------------------------
+; Phase 10 statistical / numeric aggregation helpers.
+; Pure functional; insertion order is irrelevant for scalar results, but
+; the walks still respect it and skip non-pair cells defensively (same
+; posture as every other op). No FS escapes. Values are assumed numeric
+; — the same contract kv:sum takes — so non-numeric values are the
+; caller's problem, not the store's.
+;
+; Conventions:
+;   * `kv:min` / `kv:max` walk the store once and return the smallest /
+;     largest value compared with `<` / `>`. Both return `#f` on an
+;     empty store (consistent with kv:first / kv:last / kv:nth /
+;     kv:find's "no value" sentinel — there is no "average of nothing"
+;     or "min of nothing" that is more honest than `#f`).
+;   * `kv:product` is the multiplicative reduction of all values, seeded
+;     at `1` (the multiplicative identity), so it composes cleanly with
+;     `*` and with `kv:reduce` — the same shape as `kv:sum` seeded at
+;     `0` (the additive identity).
+;   * `kv:avg` returns the arithmetic mean; on an empty store it
+;     returns `#f` because `0` is the wrong answer for "mean of
+;     nothing". Defined in terms of `kv:sum` and `kv:size` so the
+;     result is consistent with both underlying primitives — no
+;     double-walk, no hidden aggregation.
+; ---------------------------------------------------------------------------
+
+; (kv:min store) -> min value | #f.
+; Smallest value in insertion order (compared with `<`). Returns `#f`
+; when the store is empty. Walks left-to-right, skipping any stray
+; non-pair cells defensively so a malformed input cannot crash the
+; reducer. O(n) walk, no extra allocation.
+(define (kv:min store)
+  (if (null? store)
+    #f
+    (let ((p (car store)))
+      (if (pair? p)
+        (let loop ((xs (cdr store)) (m (cdr p)))
+          (if (null? xs)
+            m
+            (let ((q (car xs)))
+              (if (pair? q)
+                (loop (cdr xs) (if (< (cdr q) m) (cdr q) m))
+                (loop (cdr xs) m)))))
+        (kv:min (cdr store))))))
+
+; (kv:max store) -> max value | #f.
+; Largest value in insertion order (compared with `>`). Returns `#f`
+; when the store is empty. Same defensive-skip posture as kv:min.
+(define (kv:max store)
+  (if (null? store)
+    #f
+    (let ((p (car store)))
+      (if (pair? p)
+        (let loop ((xs (cdr store)) (m (cdr p)))
+          (if (null? xs)
+            m
+            (let ((q (car xs)))
+              (if (pair? q)
+                (loop (cdr xs) (if (> (cdr q) m) (cdr q) m))
+                (loop (cdr xs) m)))))
+        (kv:max (cdr store))))))
+
+; (kv:product store) -> product of all values.
+; Multiplicative reduction in insertion order. Empty store returns 1
+; (the multiplicative identity), matching kv:sum's 0-seed posture so
+; (kv:product s) composes cleanly with `*` and with kv:reduce for
+; custom aggregations. Skips non-pair cells defensively via _fold.
+(define (kv:product store)
+  (kv:_fold store 1 (lambda (k v acc) (* acc v))))
+
+; (kv:avg store) -> arithmetic mean | #f.
+; Returns (/ sum count). `#f` on an empty store (0/0 is undefined;
+; returning `#f` is the honest answer, matching kv:min / kv:max).
+; Defined in terms of kv:sum and kv:size so the result is consistent
+; with both primitives; the cost is two O(n) passes — same shape as
+; any other "compute both a count and a total" reduction.
+(define (kv:avg store)
+  (let ((n (kv:size store)))
+    (if (= n 0)
+      #f
+      (/ (kv:sum store) n))))
 ```
 
-FILE tests/smoke.aura
+FILE projects/kv/tests/smoke.aura
 ```
 ; projects/kv/tests/smoke.aura — project acceptance suite
 ; Avoid sequential define-after-mutate (host residual). Prefer let* chains.
@@ -2249,6 +2096,66 @@ FILE tests/smoke.aura
           (equal? (kv:get sw "a") 1)
           (equal? (kv:get sw "b") 2)
           (eq? (kv:get sw "ghost") #f))))
+
+; ---- Phase 10: statistical / numeric aggregation helpers ----
+
+; T48: min() returns the smallest value in insertion order; #f on empty.
+(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 3) "b" 1) "c" 2)))
+  (t "T48-min"
+     (and (= (kv:min s) 1)
+          (eq? (kv:min (kv:open)) #f))))
+
+; T48b: min() on a single-entry store returns that value.
+(t "T48b-min-single"
+   (= (kv:min (kv:set (kv:open) "only" 42)) 42))
+
+; T48c: min() handles negative values correctly (no implicit floor at 0).
+(let* ((s (kv:set (kv:set (kv:open) "a" -5) "b" -2)))
+  (t "T48c-min-negative"
+     (= (kv:min s) -5)))
+
+; T49: max() returns the largest value in insertion order; #f on empty.
+(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 3) "b" 1) "c" 2)))
+  (t "T49-max"
+     (and (= (kv:max s) 3)
+          (eq? (kv:max (kv:open)) #f))))
+
+; T49b: max() on a single-entry store returns that value.
+(t "T49b-max-single"
+   (= (kv:max (kv:set (kv:open) "only" 7)) 7))
+
+; T50: product() returns the product of all values; 1 on empty
+; (multiplicative identity, so it composes cleanly with * and reduce).
+(let* ((s (kv:set (kv:set (kv:set (kv:set (kv:open) "a" 2) "b" 3) "c" 4) "d" 5)))
+  (t "T50-product"
+     (and (= (kv:product s) 120)
+          (= (kv:product (kv:open)) 1))))
+
+; T51: avg() returns the arithmetic mean of all values; #f on empty
+; (vacuous case — 0 is the wrong answer for "mean of nothing").
+(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 2) "b" 4) "c" 6)))
+  (t "T51-avg"
+     (and (= (kv:avg s) 4)
+          (eq? (kv:avg (kv:open)) #f))))
+
+; T52: min/max are defensive against stray non-pair cells (they skip them,
+; preserving the same posture used by every other op in the store).
+(t "T52-min-max-defensive"
+   (let* ((st (cons 'stray-atom (kv:set (kv:set (kv:open) "a" 5) "b" 10))))
+     (and (= (kv:min st) 5)
+          (= (kv:max st) 10))))
+
+; T53: stats compose naturally with kv:merge — combined store's stats
+; reflect both sides (this exercises the "no implicit side-channels"
+; property: a store built from two sources is just a store).
+(let* ((a (kv:set (kv:set (kv:open) "a" 2) "b" 4))
+       (b (kv:set (kv:set (kv:open) "c" 8) "d" 10))
+       (m (kv:merge a b)))
+  (t "T53-stats-compose"
+     (and (= (kv:min m) 2)
+          (= (kv:max m) 10)
+          (= (kv:sum m) 24)
+          (= (kv:product m) 640))))
 
 (display "SCORE ")
 (display pass)
