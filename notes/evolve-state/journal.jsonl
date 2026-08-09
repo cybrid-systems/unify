@@ -12,3 +12,4 @@
 {"ts": "2026-08-09T04:10Z", "from_generation": 11, "to_generation": 12, "factor": 25, "body": "(lambda (x) (* x 25))", "decision": "select", "candidates_tried": 1, "candidates_n": 1, "mode": "multi-sandbox-select"}
 {"ts": "2026-08-09T04:12Z", "from_generation": 12, "to_generation": 13, "factor": 27, "body": "(lambda (x) (* x 27))", "decision": "select", "candidates_tried": 1, "candidates_n": 1, "mode": "multi-sandbox-select"}
 {"ts": "2026-08-09T04:13Z", "from_generation": 13, "to_generation": 14, "factor": 29, "body": "(lambda (x) (* x 29))", "decision": "select", "candidates_tried": 1, "candidates_n": 1, "mode": "multi-sandbox-select"}
+{"ts": "2026-08-09T04:14Z", "from_generation": 14, "to_generation": 15, "factor": 31, "body": "(lambda (x) (* x 31))", "decision": "select", "candidates_tried": 1, "candidates_n": 1, "mode": "multi-sandbox-select"}
