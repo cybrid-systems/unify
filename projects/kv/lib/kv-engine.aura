@@ -3,6 +3,16 @@
 ; Evolution surface for load-driven optimization (infinite loop target):
 ;   body / index / cache / stats / policy — pure functional.
 ; Form order: export before require.
+;
+; v2: engine-get skips the index entirely. The index field, _ensure-index,
+; _index-lookup, and _want-index? are retained for API stability and future
+; re-introduction once a denser index representation (hash / sorted tree /
+; bucketed) lands; in v2 the index provides no asymptotic speedup because
+; body is itself an alist (O(n) walk) and index was just an O(n) alist
+; snapshot of the same body. Removing it from the hot path roughly halves
+; per-read ops for cache-miss paths (cache-lookup + body-get + cache-put
+; only) and eliminates the per-write rebuild cost that dominated the mixed
+; workload. Rebuild counter now stays 0 in steady state.
 
 (export kv:engine-open
         kv:engine-set
@@ -18,7 +28,7 @@
 
 (require "kv" all:)
 
-(define kv:engine-version 1)
+(define kv:engine-version 2)
 
 ; engine = ('kv-engine body index cache stats policy)
 ; stats  = (reads writes hits misses rebuilds)
@@ -104,7 +114,10 @@
               (set! ys (cdr ys))))
           rev)))))
 
-; index: entries snapshot; rebuild only when empty and size>=thr (cheap hook)
+; index: alist snapshot; unused in v2 hot path. Kept as dead code so the
+; field + helpers remain addressable for future denser representation
+; (hash / sorted tree / bucketed). Body is the source of truth and is
+; consulted on every cache miss in v2.
 (define (kv:_index-lookup index k)
   (let ((xs index) (found #f) (val #f))
     (while (lambda () (and (pair? xs) (not found)))
@@ -162,9 +175,13 @@
             (cons "index_len" (length (kv:_eng-index e)))))))
 
 (define (kv:engine-size e) (kv:size (kv:engine-body e)))
-(define (kv:engine-has? e k) (kv:has? (kv:engine-body e) k))
+(define (kv:engine-has? e k) (kv:has? (kv:_eng-body e) k))
 
 ; → (list value new-engine)
+; v2: body is consulted on every cache miss; the index field is preserved
+; (carried through engine state) but never walked. Per-read ops for the
+; cache-miss path roughly halve vs v1 (no lazy-rebuild walk + no
+; index-lookup walk); rebuild counter stays 0 in steady state.
 (define (kv:engine-get e k)
   (if (not (kv:_eng? e))
     (list (kv:get e k) e)
@@ -174,27 +191,23 @@
            (cache (kv:_eng-cache e))
            (stats (kv:_eng-stats e))
            (use-c (kv:_want-cache? policy))
-           (use-i (kv:_want-index? policy))
            (cv (if use-c (kv:_cache-lookup cache k) #f)))
-      ; hits = cache hits only; misses = reads that missed cache (even if body hits)
+      ; hits = cache hits only; misses = reads that missed cache
+      ; (body hit/miss counted as miss).
       (if (not (eq? cv #f))
         (list cv
               (kv:_mk-eng body index
                           (kv:_cache-put cache k cv (kv:_pol-csize policy))
                           (kv:_bump stats 1 0 1 0 0)
                           policy))
-        (let* ((ens (kv:_ensure-index body index policy))
-               (nindex (car ens))
-               (rb (cadr ens))
-               (iv (if use-i (kv:_index-lookup nindex k) #f))
-               (v (if (not (eq? iv #f)) iv (kv:get body k)))
+        (let* ((v (kv:get body k))
                (found (not (eq? v #f)))
                (ncache (if (and use-c found)
                          (kv:_cache-put cache k v (kv:_pol-csize policy))
                          cache)))
           (list v
-                (kv:_mk-eng body nindex ncache
-                            (kv:_bump stats 1 0 0 1 rb)
+                (kv:_mk-eng body index ncache
+                            (kv:_bump stats 1 0 0 1 0)
                             policy)))))))
 
 (define (kv:engine-set e k v)
@@ -202,7 +215,10 @@
     (kv:set e k v)
     (let* ((policy (kv:_eng-policy e))
            (body (kv:set (kv:_eng-body e) k v))
-           ; invalidate index on write (rebuild lazily on get)
+           ; v2: index not consulted on get; keep field cleared so any
+           ; future re-introduction of denser index starts from a known
+           ; empty state. Cache still updated on write to populate hot
+           ; keys.
            (cache (if (kv:_want-cache? policy)
                     (kv:_cache-put (kv:_eng-cache e) k v (kv:_pol-csize policy))
                     (quote ())))
