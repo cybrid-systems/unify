@@ -1,95 +1,78 @@
-# Unify control architecture — LLM controller + Aura actuator
+# Unify control architecture — load-adaptive infinite evolve
+
+## Mission
+
+`projects/kv` is an **in-memory** pure-Aura KV plant. Evolution is **unbounded**:
+
+```text
+simulate load → observe metrics → retune index/cache/policy/layout →
+verify smoke + load-sim → accept if fitness↑ → journal → forever
+```
+
+Sibling denseness hosts (Aether / Hephaestus / Prometheus / Hermes) and Aura host
+residuals are co-pressured in the same continuous run (“左右仓库实时进化”).
 
 ## Roles
 
 | Role | Who | When |
 |------|-----|------|
-| **Controller** | MiniMax-M3 (`scripts/llm_controller.py`) | Each project generation, **once**, after observe |
-| **Actuator** | Unify scripts + Aura runtime | Apply patch, run tests, snapshot/select, git |
-| **Plant / subject** | `projects/kv` (SPEC + lib + tests) | Continuously under test |
-| **Memory** | `evolve/state.json`, `journal.jsonl`, `last-review.md` | After accept/reject → next observe |
+| **Controller** | MiniMax-M3 (`scripts/llm_controller.py`) | 1 call / project generation after observe |
+| **Actuator** | Unify scripts + Aura runtime | Patch sandbox, run smoke + load-sim, git |
+| **Plant** | `lib/kv.aura` + `lib/kv-engine.aura` | Correctness floor + adaptive engine |
+| **Load** | `tests/load-sim.aura` | Workload profiles + LOAD / FITNESS lines |
+| **Memory** | `evolve/state.json`, `journal.jsonl` | Includes `load_score` |
 
-LLM is **not** the thing that mutates AST in-process by default for the project loop.
-It **commands** the loop: review, direction, concrete FILE patches.
-
-Aura **has** local mutation primitives (`query :find`, `mutate:rebind`, `ast:snapshot`)
-used for denseness micro-loops; the **project** loop uses file-level patches +
-Aura as the **test/execution** engine (and later denseness mutations inside modules).
-
-## When LLM is called
-
-Exactly **one controller call per `project-evolve` generation**:
+## Closed loop
 
 ```text
-[1] OBSERVE   Aura runs tests/smoke.aura → SCORE b/t + fail tail
-[2] CONTROL   LLM ← SPEC + sources + score + journal + fail tail
-              LLM → REVIEW + DIRECTION + PATCH
-[3] ACT       sandbox copy of project; apply FILE blocks
-[4] VERIFY    Aura runs tests on sandbox → SCORE c/t
-[5] MEMORY    accept if score↑ or full-green; else reject
-              journal + last-review.md; on accept: git commit+push
-              → back to [1] on next evolve.sh cycle
+[1] OBSERVE   smoke.aura → SCORE   +  load-sim.aura → load_score / hit_rate
+[2] CONTROL   LLM ← SPEC + engine + load metrics + journal
+              LLM → REVIEW + DIRECTION + PATCH  (prefer kv-engine policy/structure)
+[3] ACT       sandbox apply FILE blocks
+[4] VERIFY    smoke (hard gate) + load-sim (soft optimize)
+[5] MEMORY    accept if smoke OK and load not worse / improved
+              → commit+push → next cycle (infinite)
 ```
 
-No LLM during offline four-span smoke, git-probe, or pure test runs.
+Also each `run-continuous` cycle:
 
-## Closed loop (control view)
-
-```text
-                 ┌──────────────────────────────────────┐
-                 │           LLM controller             │
-                 │  review · direction · patch ideas    │
-                 └──────────────┬───────────────────────┘
-                                │ PATCH (FILE blocks)
-                                ▼
-  observe ◄── tests ── Aura ── act (sandbox apply)
-     ▲                           │
-     │                           ▼
-     └────── memory ◄── accept/reject ◄── verify (Aura SCORE)
-```
-
-## Aura local transform (actuator toolkit)
-
-| Primitive | Use in loop |
-|-----------|-------------|
-| Run `tests/smoke.aura` | Observe / verify fitness |
-| File sandbox + copy | Actuator for project-level edits |
-| `(query :find)` / `mutate:rebind` / `ast:snapshot` | Optional denseness sub-loop inside modules |
-| `write-file` etc. | Later KV persistence phases (metered E) |
-
-## Artifacts per generation
-
-| Path | Content |
+| Step | Purpose |
 |------|---------|
-| `evolve/last-observe.log` | Test output before control |
-| `evolve/last-control.json` | Parsed review / direction / patch |
-| `evolve/last-review.md` | Human/agent readable review |
-| `evolve/last-patch.md` | Raw controller output |
-| `evolve/journal.jsonl` | Accepted/rejected memory for next control |
+| offline / live denseness | four-span smoke |
+| git-probe | unify repo health |
+| fiber-stress | high-concurrency fiber denseness |
+| load-sim (via project-evolve) | adaptive KV fitness |
+| project-evolve | LLM control + accept |
+| sibling denseness (optional) | heph concurrent examples under fiber-stress |
 
-## Entry & resume
+## Fitness
+
+| Gate | Rule |
+|------|------|
+| Hard | smoke SCORE full-green (or non-decreasing while climbing floor) |
+| Soft | `LOAD_SCORE_TOTAL` / hit_rate / ops_per_s improve or hold |
+| Reject | smoke regress, load regress, parse fail (0/0), LLM timeout (soft) |
+
+## Adaptive engine surface
+
+See `projects/kv/SPEC.md`. Generations retune:
+
+- `mode`: alist | cache | index | hybrid  
+- `cache-size`, `index-threshold`  
+- eviction / rebuild / layout internals in `kv-engine.aura`
+
+## Entry
 
 ```bash
-./scripts/evolve.sh                      # loop + watchdog
+./scripts/evolve.sh                 # continuous + watchdog
 ./scripts/evolve.sh status
-./scripts/evolve.sh stop                 # clean stop (no auto-restart)
-./scripts/evolve.sh resume               # after crash/network: pull if safe + restart
-./scripts/project-evolve.sh projects/kv  # one generation
+./scripts/project-evolve.sh projects/kv
+./scripts/kv-load.sh                # load-sim only
+./scripts/fiber-stress.sh           # fiber pressure only
 ```
 
-### Survive network / process death
+## Non-goals of the controller
 
-| Mechanism | Behavior |
-|-----------|----------|
-| Workspace state | `projects/kv/lib`, `tests`, `evolve/state.json` — never reset on restart |
-| Watchdog | `evolve-watchdog.sh` polls every 60s; if loop PID dead and `WANT_RUN` set → restart |
-| LLM timeout | retries + soft-reject; next generation continues |
-| Git push fail | non-fatal; local commits remain; next accept retries push |
-| `resume` | `git fetch`; ff-only pull if local not ahead; ensure loop+watchdog |
-
-Do **not** delete `projects/kv` to “reset” unless you mean a new project.
-
-## Legacy
-
-Function-axis denseness explore (`durable-evolve.sh`) is optional
-(`UNIFY_DURABLE_EVOLVE=1`); not the primary product controller loop.
+- Infinite Phase-N helper APIs as the primary objective  
+- Disk / network KV (unless a later metered phase)  
+- Spam Aura issues without 定界  

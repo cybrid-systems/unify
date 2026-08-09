@@ -23,6 +23,7 @@
 #   UNIFY_FIBER_KEYS      keys per worker store (default 128)
 #   UNIFY_FIBER_WAVES     sustained multi-wave fanout rounds (default 4)
 #   UNIFY_FIBER_BATCH     live concurrent thread cap per fanout (default 16; 0=unlimited)
+#   UNIFY_LOAD_SIM        1 = standalone load-sim each cycle (default 1)
 #   UNIFY_DURABLE_EVOLVE  1 = also run function-axis explore (default 0)
 #   UNIFY_GIT_COMMIT      1 = commit on success (default 1)
 #   UNIFY_GIT_PUSH         1 = git push after commit (default 1)
@@ -65,6 +66,9 @@ export UNIFY_FIBER_N="${UNIFY_FIBER_N:-32}"
 export UNIFY_FIBER_KEYS="${UNIFY_FIBER_KEYS:-128}"
 export UNIFY_FIBER_WAVES="${UNIFY_FIBER_WAVES:-4}"
 export UNIFY_FIBER_BATCH="${UNIFY_FIBER_BATCH:-16}"
+export UNIFY_LOAD_SIM="${UNIFY_LOAD_SIM:-1}"
+export AURA_BIN="${AURA_BIN:-$ROOT/../aura-grok/build/aura}"
+export AURA_SANDBOX="${AURA_SANDBOX:-off}"
 
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 RUN_DIR="$LOG_ROOT/$RUN_ID"
@@ -289,13 +293,31 @@ while true; do
       "$cdir/fiber-stress.log"; then
       c_ok=$((c_ok + 1))
     else
+      # Soft: fiber flaky must not kill adaptive plant evolve
+      log "WARN fiber-stress soft-fail (continue cycle)"
       c_fail=$((c_fail + 1))
     fi
   else
     log "skip fiber-stress (UNIFY_FIBER_STRESS=0)"
   fi
 
-  # Project-level evolve (e.g. KV store under SPEC + tests)
+  # Standalone load-sim observe (metrics even if project-evolve skipped)
+  if [[ "${UNIFY_LOAD_SIM:-1}" == "1" && -f "${UNIFY_PROJECT}/tests/load-sim.aura" ]]; then
+    if run_step "load-sim" \
+      "AURA_PATH=${ROOT}/${UNIFY_PROJECT}/lib:${ROOT}/../aura-grok/lib:${ROOT}/lib ${AURA_BIN} < ${ROOT}/${UNIFY_PROJECT}/tests/load-sim.aura" \
+      "RESULT pass project=kv-load" \
+      "$cdir/load-sim.log"; then
+      c_ok=$((c_ok + 1))
+      if grep -qE 'LOAD_SCORE_TOTAL' "$cdir/load-sim.log"; then
+        log "load_score=$(grep -oE 'LOAD_SCORE_TOTAL [-0-9.]+' "$cdir/load-sim.log" | tail -n1 | awk '{print $2}')"
+      fi
+    else
+      log "WARN load-sim soft-fail (project-evolve still runs)"
+      c_fail=$((c_fail + 1))
+    fi
+  fi
+
+  # Project-level evolve: infinite load-adaptive plant + LLM controller
   if [[ "${UNIFY_PROJECT_EVOLVE}" == "1" ]]; then
     if run_step "project-evolve" \
       "./scripts/project-evolve.sh ${UNIFY_PROJECT}" \

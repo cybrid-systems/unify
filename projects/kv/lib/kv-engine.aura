@@ -1,0 +1,226 @@
+; projects/kv/lib/kv-engine.aura — adaptive in-memory engine over pure kv body
+;
+; Evolution surface for load-driven optimization (infinite loop target):
+;   body / index / cache / stats / policy — pure functional.
+; Form order: export before require.
+
+(export kv:engine-open
+        kv:engine-set
+        kv:engine-get
+        kv:engine-del
+        kv:engine-has?
+        kv:engine-size
+        kv:engine-body
+        kv:engine-stats
+        kv:engine-policy
+        kv:engine-tune
+        kv:engine-version)
+
+(require "kv" all:)
+
+(define kv:engine-version 1)
+
+; engine = ('kv-engine body index cache stats policy)
+; stats  = (reads writes hits misses rebuilds)
+; policy = (mode cache-size index-threshold)
+; mode: "alist" | "cache" | "index" | "hybrid"
+
+(define (kv:_eng? e)
+  (and (pair? e) (eq? (car e) (quote kv-engine))))
+
+(define (kv:_eng-body e) (list-ref e 1))
+(define (kv:_eng-index e) (list-ref e 2))
+(define (kv:_eng-cache e) (list-ref e 3))
+(define (kv:_eng-stats e) (list-ref e 4))
+(define (kv:_eng-policy e) (list-ref e 5))
+
+(define (kv:_mk-eng body index cache stats policy)
+  (list (quote kv-engine) body index cache stats policy))
+
+(define (kv:_default-policy) (list "hybrid" 8 32))
+(define (kv:_zero-stats) (list 0 0 0 0 0))
+
+(define (kv:_pol-mode p) (list-ref p 0))
+(define (kv:_pol-csize p) (list-ref p 1))
+(define (kv:_pol-ithr p) (list-ref p 2))
+
+(define (kv:_st-reads s) (list-ref s 0))
+(define (kv:_st-writes s) (list-ref s 1))
+(define (kv:_st-hits s) (list-ref s 2))
+(define (kv:_st-misses s) (list-ref s 3))
+(define (kv:_st-rebuilds s) (list-ref s 4))
+
+(define (kv:_bump s r w h m rb)
+  (list (+ (kv:_st-reads s) r)
+        (+ (kv:_st-writes s) w)
+        (+ (kv:_st-hits s) h)
+        (+ (kv:_st-misses s) m)
+        (+ (kv:_st-rebuilds s) rb)))
+
+; cache: list of (k . v), MRU at head. Use while to avoid deep recursion.
+(define (kv:_cache-lookup cache k)
+  (let ((xs cache) (found #f) (val #f))
+    (while (lambda () (and (pair? xs) (not found)))
+      (lambda ()
+        (let ((p (car xs)))
+          (if (and (pair? p) (equal? (car p) k))
+            (begin (set! found #t) (set! val (cdr p)))
+            #f)
+          (set! xs (cdr xs)))))
+    (if found val #f)))
+
+(define (kv:_cache-remove cache k)
+  (let ((xs cache) (acc (quote ())))
+    (while (lambda () (pair? xs))
+      (lambda ()
+        (let ((p (car xs)))
+          (if (and (pair? p) (equal? (car p) k))
+            #f
+            (set! acc (cons p acc)))
+          (set! xs (cdr xs)))))
+    ; reverse acc
+    (let ((ys acc) (out (quote ())))
+      (while (lambda () (pair? ys))
+        (lambda ()
+          (set! out (cons (car ys) out))
+          (set! ys (cdr ys))))
+      out)))
+
+(define (kv:_cache-put cache k v cap)
+  (if (<= cap 0)
+    (quote ())
+    (let* ((stripped (kv:_cache-remove cache k))
+           (grown (cons (cons k v) stripped)))
+      (let ((xs grown) (n 0) (out (quote ())) (acc (quote ())))
+        (while (lambda () (and (pair? xs) (< n cap)))
+          (lambda ()
+            (set! acc (cons (car xs) acc))
+            (set! n (+ n 1))
+            (set! xs (cdr xs))))
+        (let ((ys acc) (rev (quote ())))
+          (while (lambda () (pair? ys))
+            (lambda ()
+              (set! rev (cons (car ys) rev))
+              (set! ys (cdr ys))))
+          rev)))))
+
+; index: entries snapshot; rebuild only when empty and size>=thr (cheap hook)
+(define (kv:_index-lookup index k)
+  (let ((xs index) (found #f) (val #f))
+    (while (lambda () (and (pair? xs) (not found)))
+      (lambda ()
+        (let ((p (car xs)))
+          (if (and (pair? p) (equal? (car p) k))
+            (begin (set! found #t) (set! val (cdr p)))
+            #f)
+          (set! xs (cdr xs)))))
+    (if found val #f)))
+
+(define (kv:_want-index? policy)
+  (let ((m (kv:_pol-mode policy)))
+    (or (equal? m "index") (equal? m "hybrid"))))
+
+(define (kv:_want-cache? policy)
+  (let ((m (kv:_pol-mode policy)))
+    (or (equal? m "cache") (equal? m "hybrid"))))
+
+(define (kv:_ensure-index body index policy)
+  (if (not (kv:_want-index? policy))
+    (list index 0)
+    (if (and (null? index) (>= (kv:size body) (kv:_pol-ithr policy)))
+      (list (kv:entries body) 1)
+      (list index 0))))
+
+; ── public ────────────────────────────────────────────────────────────────
+
+(define (kv:engine-open . args)
+  (let ((policy (if (and (pair? args) (pair? (car args)))
+                  (car args)
+                  (kv:_default-policy))))
+    (kv:_mk-eng (kv:open) (quote ()) (quote ()) (kv:_zero-stats) policy)))
+
+(define (kv:engine-body e)
+  (if (kv:_eng? e) (kv:_eng-body e) e))
+
+(define (kv:engine-policy e)
+  (if (kv:_eng? e) (kv:_eng-policy e) (kv:_default-policy)))
+
+(define (kv:engine-stats e)
+  (if (not (kv:_eng? e))
+    (quote ())
+    (let ((s (kv:_eng-stats e)) (p (kv:_eng-policy e)))
+      (list (cons "reads" (kv:_st-reads s))
+            (cons "writes" (kv:_st-writes s))
+            (cons "hits" (kv:_st-hits s))
+            (cons "misses" (kv:_st-misses s))
+            (cons "rebuilds" (kv:_st-rebuilds s))
+            (cons "mode" (kv:_pol-mode p))
+            (cons "cache_size" (kv:_pol-csize p))
+            (cons "index_threshold" (kv:_pol-ithr p))
+            (cons "size" (kv:size (kv:_eng-body e)))
+            (cons "cache_len" (length (kv:_eng-cache e)))
+            (cons "index_len" (length (kv:_eng-index e)))))))
+
+(define (kv:engine-size e) (kv:size (kv:engine-body e)))
+(define (kv:engine-has? e k) (kv:has? (kv:engine-body e) k))
+
+; → (list value new-engine)
+(define (kv:engine-get e k)
+  (if (not (kv:_eng? e))
+    (list (kv:get e k) e)
+    (let* ((policy (kv:_eng-policy e))
+           (body (kv:_eng-body e))
+           (index (kv:_eng-index e))
+           (cache (kv:_eng-cache e))
+           (stats (kv:_eng-stats e))
+           (use-c (kv:_want-cache? policy))
+           (use-i (kv:_want-index? policy))
+           (cv (if use-c (kv:_cache-lookup cache k) #f)))
+      ; hits = cache hits only; misses = reads that missed cache (even if body hits)
+      (if (not (eq? cv #f))
+        (list cv
+              (kv:_mk-eng body index
+                          (kv:_cache-put cache k cv (kv:_pol-csize policy))
+                          (kv:_bump stats 1 0 1 0 0)
+                          policy))
+        (let* ((ens (kv:_ensure-index body index policy))
+               (nindex (car ens))
+               (rb (cadr ens))
+               (iv (if use-i (kv:_index-lookup nindex k) #f))
+               (v (if (not (eq? iv #f)) iv (kv:get body k)))
+               (found (not (eq? v #f)))
+               (ncache (if (and use-c found)
+                         (kv:_cache-put cache k v (kv:_pol-csize policy))
+                         cache)))
+          (list v
+                (kv:_mk-eng body nindex ncache
+                            (kv:_bump stats 1 0 0 1 rb)
+                            policy)))))))
+
+(define (kv:engine-set e k v)
+  (if (not (kv:_eng? e))
+    (kv:set e k v)
+    (let* ((policy (kv:_eng-policy e))
+           (body (kv:set (kv:_eng-body e) k v))
+           ; invalidate index on write (rebuild lazily on get)
+           (cache (if (kv:_want-cache? policy)
+                    (kv:_cache-put (kv:_eng-cache e) k v (kv:_pol-csize policy))
+                    (quote ())))
+           (stats (kv:_bump (kv:_eng-stats e) 0 1 0 0 0)))
+      (kv:_mk-eng body (quote ()) cache stats policy))))
+
+(define (kv:engine-del e k)
+  (if (not (kv:_eng? e))
+    (kv:del e k)
+    (let* ((policy (kv:_eng-policy e))
+           (body (kv:del (kv:_eng-body e) k))
+           (cache (kv:_cache-remove (kv:_eng-cache e) k))
+           (stats (kv:_bump (kv:_eng-stats e) 0 1 0 0 0)))
+      (kv:_mk-eng body (quote ()) cache stats policy))))
+
+(define (kv:engine-tune e policy-patch)
+  (if (not (kv:_eng? e))
+    e
+    (kv:_mk-eng (kv:_eng-body e) (quote ()) (quote ())
+                (kv:_bump (kv:_eng-stats e) 0 0 0 0 1)
+                policy-patch)))

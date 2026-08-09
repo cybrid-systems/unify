@@ -92,27 +92,40 @@ def clip_source(path: str, body: str, max_chars: int) -> str:
     )
 
 
-SYSTEM = """You are the *controller* of a continuous software self-evolution loop.
+SYSTEM = """You are the *controller* of a continuous **load-adaptive** self-evolution loop.
 
-You do NOT run code. An automatic actuator (Unify + Aura) will:
+Plant: in-memory pure-Aura KV (`projects/kv`) with an adaptive **engine**
+(index / cache / policy / stats). Goal is **unbounded** optimization under
+simulated load — NOT stacking more CRUD helpers forever.
+
+Actuator (Unify + Aura) will:
   - apply your FILE patches in a sandbox
-  - run the project's Aura tests
-  - accept only if SCORE does not regress
-  - commit/push winners
-  - feed results back to you next generation
+  - run smoke (correctness floor) + load-sim (fitness)
+  - accept only if correctness holds AND load fitness does not regress
+  - commit/push winners; journal feeds you next generation
 
-Your job each generation:
-  1. REVIEW the project vs SPEC and test output
-  2. Set DIRECTION (what to improve next; phase from SPEC)
-  3. Emit a concrete PATCH the actuator can apply
+Each generation:
+  1. REVIEW smoke SCORE + LOAD metrics (ops/s, hit_rate, load_score, policy)
+  2. DIRECTION — retune structure/policy for the observed workload
+  3. PATCH concrete files
+
+## Priority (strict)
+
+1. Keep `tests/smoke.aura` full-green (never regress correctness floor)
+2. Improve `tests/load-sim.aura` load_score / hit_rate / ops_per_s
+3. Prefer policy/structure changes in `lib/kv-engine.aura` over new helpers
+4. Only extend `lib/kv.aura` helpers if they serve measurement or adaptation
+5. Pure Aura; no FS/network; export-before-define; avoid nested fiber:join;
+   avoid top-level set! after fiber:join; prefer while / let* over deep recursion
 
 ## Output format (exact section headers)
 
 ### REVIEW
-(bullet points: strengths, failures, denseness/host risks)
+(bullet: correctness, load metrics, which policy fits which profile, risks)
 
 ### DIRECTION
-(one short plan: target phase, ops to implement, what NOT to touch)
+(one short plan: which policy/mode/cache/index change OR engine path rewrite;
+ what NOT to touch — usually leave smoke API surface alone)
 
 ### PATCH
 FILE relative/path
@@ -121,13 +134,11 @@ full file contents
 ```
 
 Rules for PATCH:
-- Prefer full-file replacement for small projects (lib/kv.aura).
-- Keep Aura export-before-define style when using (export ...).
-- Prefer pure functional store updates; meter any FS as escape.
-- If SCORE is already full, advance SPEC phase (new capability) via code that
-  still keeps old tests green; you may also extend tests/smoke.aura carefully
-  only if you also implement the feature.
+- Prefer editing `lib/kv-engine.aura` and/or `tests/load-sim.aura`.
+- Full-file replacement for those modules is OK if still small.
+- Do NOT break kv:open/set/get/... contracts used by smoke.
 - No secrets, no network in product code.
+- If smoke is not full-green: fix that first with the smallest patch.
 """
 
 
@@ -141,6 +152,8 @@ def build_user(
     sources: dict[str, str],
     test_tail: str,
     memory: str,
+    load_tail: str = "",
+    load_score: str = "",
 ) -> str:
     src_blocks = []
     for path, body in sources.items():
@@ -151,8 +164,10 @@ def build_user(
 |-------|-------|
 | project | {project} |
 | generation | {gen} |
-| baseline SCORE | {score}/{total} |
+| baseline smoke SCORE | {score}/{total} |
+| baseline load_score | {load_score or "(n/a)"} |
 | time_utc | {datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%MZ")} |
+| mission | infinite load-adaptive optimize (memory KV) |
 
 ### SPEC
 {spec}
@@ -163,14 +178,19 @@ def build_user(
 ### Recent controller memory (journal tail)
 {memory or "(empty)"}
 
-### Last test output (tail)
+### Last smoke output (tail)
 ```
 {test_tail}
 ```
 
-If SCORE is not full: list every FAIL line, fix those first with the **smallest**
-patch that still loads (prefer full-file only if short; otherwise surgical).
-If SCORE is full: advance a new phase with new tests + implementation.
+### Last load-sim output (tail)
+```
+{load_tail or "(no load-sim yet)"}
+```
+
+If smoke SCORE is not full: fix FAIL lines first (smallest patch).
+If smoke is full: improve **load fitness** (cache/index/policy/hot path).
+Do **not** default to adding Phase-N helpers.
 
 Respond with ### REVIEW, ### DIRECTION, ### PATCH only.
 """
@@ -242,6 +262,8 @@ def main() -> int:
     ap.add_argument("--total", default="0")
     ap.add_argument("--spec", required=True)
     ap.add_argument("--test-log", required=True)
+    ap.add_argument("--load-log", default="", help="load-sim log for fitness")
+    ap.add_argument("--load-score", default="", help="parsed load_score total")
     ap.add_argument("--memory", default="")
     ap.add_argument("--source", action="append", default=[], help="path relative to project")
     ap.add_argument("--out-json", required=True)
@@ -253,13 +275,18 @@ def main() -> int:
     test_tail = "\n".join(
         Path(args.test_log).read_text(encoding="utf-8", errors="replace").splitlines()[-80:]
     )
+    load_tail = ""
+    if args.load_log and Path(args.load_log).is_file():
+        load_tail = "\n".join(
+            Path(args.load_log).read_text(encoding="utf-8", errors="replace").splitlines()[-60:]
+        )
     memory = ""
     if args.memory and Path(args.memory).is_file():
         memory = "\n".join(Path(args.memory).read_text(encoding="utf-8", errors="replace").splitlines()[-40:])
     # Cap each source file in the prompt (full files still on disk for actuator).
     max_src = int(os.environ.get("UNIFY_LLM_SRC_CHARS", "24000"))
     sources: dict[str, str] = {}
-    for rel in args.source or ["lib/kv.aura"]:
+    for rel in args.source or ["lib/kv.aura", "lib/kv-engine.aura", "tests/load-sim.aura"]:
         p = proj / rel
         if p.is_file():
             raw = p.read_text(encoding="utf-8", errors="replace")
@@ -274,6 +301,8 @@ def main() -> int:
         sources=sources,
         test_tail=test_tail,
         memory=memory,
+        load_tail=load_tail,
+        load_score=args.load_score,
     )
     raw = chat(SYSTEM, user)
     sections = parse_sections(raw)

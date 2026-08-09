@@ -56,10 +56,11 @@ fi
 run_tests() {
   local work="$1"
   local logf="$2"
+  local suite="${3:-smoke.aura}"
   local apath="$work/lib:${AURA_PATH:-$ROOT/../aura-grok/lib:$ROOT/lib}"
   set +e
   AURA_PATH="$apath" AURA_BIN="$AURA_BIN" AURA_SANDBOX="$AURA_SANDBOX" \
-    "$AURA_BIN" <"$work/tests/smoke.aura" >"$logf" 2>&1
+    "$AURA_BIN" <"$work/tests/$suite" >"$logf" 2>&1
   local rc=$?
   set -e
   local score=0 total=0
@@ -70,16 +71,45 @@ run_tests() {
   echo "$rc $score $total"
 }
 
-echo "======== [1/5] OBSERVE (Aura tests) ========"
+parse_load_score() {
+  local logf="$1"
+  if grep -qE 'LOAD_SCORE_TOTAL ' "$logf"; then
+    grep -oE 'LOAD_SCORE_TOTAL [-0-9.]+' "$logf" | tail -n1 | awk '{print $2}'
+  elif grep -qE 'load_score=' "$logf"; then
+    grep -oE 'load_score=[-0-9.]+' "$logf" | tail -n1 | cut -d= -f2
+  else
+    echo "0"
+  fi
+}
+
+echo "======== [1/5] OBSERVE (smoke + load-sim) ========"
 BASE_LOG="$(mktemp)"
-read -r BASE_RC BASE_SCORE BASE_TOTAL < <(run_tests "$PROJ" "$BASE_LOG")
-echo "[observe] score=$BASE_SCORE/$BASE_TOTAL rc=$BASE_RC project=$PROJ_REL"
+read -r BASE_RC BASE_SCORE BASE_TOTAL < <(run_tests "$PROJ" "$BASE_LOG" smoke.aura)
+echo "[observe] smoke=$BASE_SCORE/$BASE_TOTAL rc=$BASE_RC project=$PROJ_REL"
 if [[ "$BASE_TOTAL" -eq 0 ]]; then
   echo "error: tests produced no SCORE" >&2
   tail -n 40 "$BASE_LOG" || true
   exit 1
 fi
+BASE_LOAD_LOG="$(mktemp)"
+BASE_LOAD_SCORE="0"
+if [[ -f "$PROJ/tests/load-sim.aura" ]]; then
+  read -r _BLRC _BLS _BLT < <(run_tests "$PROJ" "$BASE_LOAD_LOG" load-sim.aura)
+  BASE_LOAD_SCORE="$(parse_load_score "$BASE_LOAD_LOG")"
+  echo "[observe] load_score=$BASE_LOAD_SCORE load_tests=${_BLS:-?}/${_BLT:-?} (infinite-evolve fitness)"
+  cp -f "$BASE_LOAD_LOG" "$EVOLVE_DIR/last-load.log"
+else
+  echo "[observe] no load-sim.aura — fitness=smoke only"
+  echo "(no load-sim)" >"$BASE_LOAD_LOG"
+fi
 cp -f "$BASE_LOG" "$EVOLVE_DIR/last-observe.log"
+# Combined observe for humans
+{
+  echo "### smoke"
+  tail -n 30 "$BASE_LOG"
+  echo "### load-sim"
+  tail -n 40 "$BASE_LOAD_LOG"
+} >"$EVOLVE_DIR/last-observe-combined.log"
 
 if [[ ! -f "${MINIMAX_KEY_FILE:-$HOME/code/keys/minimax}" ]]; then
   echo "error: MiniMax key required (LLM controller)" >&2
@@ -101,8 +131,12 @@ python3 "$ROOT/scripts/llm_controller.py" \
   --total "$BASE_TOTAL" \
   --spec "$PROJ/SPEC.md" \
   --test-log "$BASE_LOG" \
+  --load-log "$BASE_LOAD_LOG" \
+  --load-score "$BASE_LOAD_SCORE" \
   --memory "$JOURNAL" \
   --source lib/kv.aura \
+  --source lib/kv-engine.aura \
+  --source tests/load-sim.aura \
   --source tests/smoke.aura \
   --out-json "$LAST_CTRL" \
   --out-patch "$LAST_PATCH"
@@ -223,34 +257,73 @@ if [[ "$act_rc" -ne 0 ]]; then
   exit 1
 fi
 
-echo "======== [4/5] VERIFY (Aura tests on sandbox) ========"
+echo "======== [4/5] VERIFY (smoke + load-sim on sandbox) ========"
 NEW_LOG="$(mktemp)"
-read -r NEW_RC NEW_SCORE NEW_TOTAL < <(run_tests "$SANDBOX" "$NEW_LOG")
-echo "[verify] score=$NEW_SCORE/$NEW_TOTAL rc=$NEW_RC"
-tail -n 20 "$NEW_LOG" || true
+read -r NEW_RC NEW_SCORE NEW_TOTAL < <(run_tests "$SANDBOX" "$NEW_LOG" smoke.aura)
+echo "[verify] smoke=$NEW_SCORE/$NEW_TOTAL rc=$NEW_RC"
+tail -n 15 "$NEW_LOG" || true
+
+NEW_LOAD_LOG="$(mktemp)"
+NEW_LOAD_SCORE="0"
+if [[ -f "$SANDBOX/tests/load-sim.aura" ]]; then
+  read -r _NLRC _NLS _NLT < <(run_tests "$SANDBOX" "$NEW_LOAD_LOG" load-sim.aura)
+  NEW_LOAD_SCORE="$(parse_load_score "$NEW_LOAD_LOG")"
+  echo "[verify] load_score=$NEW_LOAD_SCORE load_tests=${_NLS:-?}/${_NLT:-?}"
+  tail -n 20 "$NEW_LOAD_LOG" || true
+fi
 
 ACCEPT=0
 REASON="regress-or-no-gain"
-if [[ "$NEW_TOTAL" -gt 0 && "$NEW_SCORE" -gt "$BASE_SCORE" ]]; then
-  ACCEPT=1; REASON="score-improved"
-elif [[ "$NEW_TOTAL" -gt 0 && "$NEW_SCORE" -eq "$NEW_TOTAL" && "$NEW_SCORE" -ge "$BASE_SCORE" ]]; then
-  ACCEPT=1; REASON="full-green"
-elif [[ "$NEW_TOTAL" -gt 0 && "$NEW_SCORE" -eq "$BASE_SCORE" && "$NEW_SCORE" -eq "$BASE_TOTAL" ]]; then
-  # already full; accept only if sources changed meaningfully toward next phase
-  if ! diff -q "$PROJ/lib/kv.aura" "$SANDBOX/lib/kv.aura" >/dev/null 2>&1; then
-    ACCEPT=1; REASON="full-green-refactor"
+# Hard gate: smoke must not regress; prefer full-green floor
+SMOKE_OK=0
+if [[ "$NEW_TOTAL" -gt 0 && "$NEW_SCORE" -eq "$NEW_TOTAL" && "$NEW_SCORE" -ge "$BASE_SCORE" ]]; then
+  SMOKE_OK=1
+elif [[ "$NEW_TOTAL" -gt 0 && "$NEW_SCORE" -gt "$BASE_SCORE" ]]; then
+  SMOKE_OK=1
+fi
+
+load_ge() {
+  # awk numeric compare a >= b
+  awk -v a="$1" -v b="$2" 'BEGIN { exit !(a+0 >= b+0) }'
+}
+load_gt() {
+  awk -v a="$1" -v b="$2" 'BEGIN { exit !(a+0 > b+0) }'
+}
+
+if [[ "$SMOKE_OK" -eq 1 ]]; then
+  if load_gt "$NEW_LOAD_SCORE" "$BASE_LOAD_SCORE"; then
+    ACCEPT=1; REASON="load-improved"
+  elif [[ "$NEW_SCORE" -gt "$BASE_SCORE" ]]; then
+    ACCEPT=1; REASON="score-improved"
+  elif [[ "$NEW_SCORE" -eq "$NEW_TOTAL" && "$NEW_SCORE" -gt "$BASE_TOTAL" ]]; then
+    ACCEPT=1; REASON="smoke-expanded"
+  elif load_ge "$NEW_LOAD_SCORE" "$BASE_LOAD_SCORE"; then
+    # full smoke + load not worse: accept structure/policy edits
+    if ! diff -rq "$PROJ/lib" "$SANDBOX/lib" >/dev/null 2>&1 \
+      || ! diff -q "$PROJ/tests/load-sim.aura" "$SANDBOX/tests/load-sim.aura" >/dev/null 2>&1; then
+      ACCEPT=1; REASON="full-green-adaptive-refactor"
+    else
+      REASON="no-change"
+    fi
   else
-    REASON="no-change"
+    REASON="load-regress"
+  fi
+else
+  if [[ "$NEW_TOTAL" -eq 0 ]]; then
+    REASON="smoke-load-fail"
+  else
+    REASON="smoke-regress"
   fi
 fi
 
 echo "======== [5/5] MEMORY (accept/reject + journal) ========"
 if [[ "$ACCEPT" -ne 1 ]]; then
   cp -f "$NEW_LOG" "$LAST_FAIL"
-  python3 - "$STATE" "$JOURNAL" "$LAST_CTRL" "$BASE_SCORE" "$BASE_TOTAL" "$NEW_SCORE" "$NEW_TOTAL" "$REASON" <<'PY'
+  python3 - "$STATE" "$JOURNAL" "$LAST_CTRL" "$BASE_SCORE" "$BASE_TOTAL" "$NEW_SCORE" "$NEW_TOTAL" "$REASON" \
+    "$BASE_LOAD_SCORE" "$NEW_LOAD_SCORE" <<'PY'
 import json, sys
 from datetime import datetime, timezone
-path, journal, ctrlp, bs, bt, ns, nt, reason = sys.argv[1:9]
+path, journal, ctrlp, bs, bt, ns, nt, reason, bls, nls = sys.argv[1:11]
 st = json.load(open(path))
 ctrl = json.load(open(ctrlp))
 now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
@@ -262,6 +335,8 @@ row = {
     "reason": reason,
     "baseline": f"{bs}/{bt}",
     "candidate": f"{ns}/{nt}",
+    "load_baseline": bls,
+    "load_candidate": nls,
     "review": (ctrl.get("review") or "")[:500],
     "direction": (ctrl.get("direction") or "")[:500],
 }
@@ -269,13 +344,14 @@ st.setdefault("history", []).append(row)
 st["history"] = st["history"][-100:]
 st["status"] = "rejected"
 st["updated"] = now
+st["best_load_score"] = st.get("best_load_score", bls)
 st["last_review"] = (ctrl.get("review") or "")[:2000]
 st["last_direction"] = (ctrl.get("direction") or "")[:1000]
 json.dump(st, open(path, "w"), indent=2)
 open(journal, "a").write(json.dumps(row, ensure_ascii=False) + "\n")
-print("memory: rejected", reason)
+print("memory: rejected", reason, "load", bls, "->", nls)
 PY
-  echo "RESULT pass project-evolve soft-reject reason=$REASON score=$NEW_SCORE/$NEW_TOTAL baseline=$BASE_SCORE/$BASE_TOTAL"
+  echo "RESULT pass project-evolve soft-reject reason=$REASON smoke=$NEW_SCORE/$NEW_TOTAL load=$NEW_LOAD_SCORE baseline_load=$BASE_LOAD_SCORE"
   exit 0
 fi
 
@@ -290,10 +366,11 @@ while IFS= read -r -d '' f; do
   esac
 done < <(find "$SANDBOX" -type f -print0)
 
-python3 - "$STATE" "$JOURNAL" "$LAST_CTRL" "$BASE_SCORE" "$BASE_TOTAL" "$NEW_SCORE" "$NEW_TOTAL" "$REASON" <<'PY'
+python3 - "$STATE" "$JOURNAL" "$LAST_CTRL" "$BASE_SCORE" "$BASE_TOTAL" "$NEW_SCORE" "$NEW_TOTAL" "$REASON" \
+  "$BASE_LOAD_SCORE" "$NEW_LOAD_SCORE" <<'PY'
 import json, sys
 from datetime import datetime, timezone
-path, journal, ctrlp, bs, bt, ns, nt, reason = sys.argv[1:9]
+path, journal, ctrlp, bs, bt, ns, nt, reason, bls, nls = sys.argv[1:11]
 st = json.load(open(path))
 ctrl = json.load(open(ctrlp))
 now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
@@ -306,12 +383,18 @@ row = {
     "reason": reason,
     "baseline": f"{bs}/{bt}",
     "candidate": f"{ns}/{nt}",
+    "load_baseline": bls,
+    "load_candidate": nls,
     "review": (ctrl.get("review") or "")[:500],
     "direction": (ctrl.get("direction") or "")[:500],
 }
 st["generation"] = gen
 st["best_score"] = int(ns)
 st["best_total"] = int(nt)
+try:
+    st["best_load_score"] = max(float(st.get("best_load_score") or 0), float(nls or 0))
+except Exception:
+    st["best_load_score"] = nls
 st["status"] = "ok"
 st["updated"] = now
 st["last_review"] = (ctrl.get("review") or "")[:2000]
@@ -320,10 +403,10 @@ st.setdefault("history", []).append(row)
 st["history"] = st["history"][-100:]
 json.dump(st, open(path, "w"), indent=2)
 open(journal, "a").write(json.dumps(row, ensure_ascii=False) + "\n")
-print(f"memory: accepted gen={gen} score={ns}/{nt}")
+print(f"memory: accepted gen={gen} smoke={ns}/{nt} load={nls}")
 PY
 
-echo "RESULT pass project-evolve generation=$(python3 -c 'import json;print(json.load(open("'"$STATE"'"))["generation"])') score=$NEW_SCORE/$NEW_TOTAL reason=$REASON"
+echo "RESULT pass project-evolve generation=$(python3 -c 'import json;print(json.load(open("'"$STATE"'"))["generation"])') smoke=$NEW_SCORE/$NEW_TOTAL load=$NEW_LOAD_SCORE reason=$REASON"
 
 if [[ "$GIT_COMMIT" != "1" ]]; then
   echo "git: commit skipped"
@@ -337,9 +420,9 @@ if git diff --cached --quiet; then
 fi
 
 git commit -m "$(cat <<EOF
-project(kv): controller gen → ${NEW_SCORE}/${NEW_TOTAL} (${REASON})
+project(kv): adaptive gen → smoke ${NEW_SCORE}/${NEW_TOTAL} load ${NEW_LOAD_SCORE} (${REASON})
 
-LLM review+direction+patch; Aura tests verified; accepted by control loop.
+Load-driven engine/policy evolve; smoke floor + load-sim fitness accepted.
 EOF
 )" || true
 echo "git: $(git log -1 --oneline)"

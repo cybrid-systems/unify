@@ -32,10 +32,11 @@ required=(
   scripts/durable-evolve.sh
   scripts/project-evolve.sh
   scripts/fiber-stress.sh
+  scripts/kv-load.sh
   scripts/llm_controller.py
   projects/kv/tests/fiber-stress.aura
-)
-)
+  projects/kv/tests/load-sim.aura
+  projects/kv/lib/kv-engine.aura
   lib/unify-mutate.aura
   lib/unify-explore.aura
   notes/evolution-model.md
