@@ -1,8 +1,8 @@
 {
   "project": "projects/kv",
-  "generation": 15,
-  "best_score": 136,
-  "best_total": 136,
+  "generation": 16,
+  "best_score": 146,
+  "best_total": 148,
   "status": "ok",
   "history": [
     {
@@ -160,9 +160,31 @@
       "candidate": "136/136",
       "review": "- **Strengths:** 121/121 tests green across Phases 0\u201314 (open/set/get \u2192 filter-values). Alist-of-cons store, defensive skipping of stray non-pair cells, insertion order preserved by every op, pure functional throughout (no FS / network / host escape). Export-before-define discipline intact; API names stable; `kv:pick` walks the store, `kv:rename`/`kv:swap` consistently refuse ambiguous writes, `kv:equal?` distinguishes `#f` from miss, counter ops have init semantics, `kv:invert`/`kv:update-keys`",
       "direction": "**Target phase: Phase 15 \u2014 lookup / value-presence / span helpers.** Same posture as Phase 14 (pure Aura, derived from existing `_fold`/`_has`/`any?` primitives, no new internals, no FS escapes, no API renames, no exports removed). Keeps T1\u2013T80b green; extends smoke suite to T87 (12 new tests, target 133/133 \u2014 121 + 12 = 133, then plus the T87 composition test = 134/134).\n\n**Ops to add (6 new, all pure, all derive from existing internals; export-before-define preserved):**\n- `kv:find-key`   \u2014 `("
+    },
+    {
+      "ts": "2026-08-09T07:43Z",
+      "phase": "control-loop",
+      "generation": 15,
+      "accepted": false,
+      "reason": "regress-or-no-gain",
+      "baseline": "136/136",
+      "candidate": "0/0",
+      "review": "- 136/136 baseline green across Phases 0\u201315. Pure Aura throughout (no FS / network / host escape), alist-of-cons representation with defensive skip of stray non-pair cells, insertion order preserved by every op, export-before-define discipline intact.\n- API surface is stable since v1 (every refactor across g4\u2013g15 has held up \u2014 `kv:pick` walks the store, `kv:rename`/`kv:swap` refuse ambiguous writes, `kv:equal?` distinguishes stored `#f` from a miss, counter ops have init semantics, `kv:invert`/`",
+      "direction": "**Target phase: Phase 16 \u2014 ordering / sorting / key-extraction stats.** Same posture as Phases 14/15: pure Aura, derived from existing `_fold` / `_set` / `_has` primitives, **insertion order used as the stability tiebreaker** (matches `kv:invert`/`kv:update-keys` first-occurrence semantics and the \"earlier source position wins\" rule every other op already uses). No FS escapes, no API renames, no exports removed, no internals deleted. Keeps T1\u2013T87 green; extends the smoke suite with **T88\u2013T91 (11"
+    },
+    {
+      "ts": "2026-08-09T07:52Z",
+      "phase": "control-loop",
+      "generation": 16,
+      "accepted": true,
+      "reason": "score-improved",
+      "baseline": "136/136",
+      "candidate": "146/148",
+      "review": "- 136/136 baseline green across Phases 0\u201315 (open/set/get \u2192 drop-while). Pure Aura alist-of-cons store, defensive skipping of stray non-pair cells, insertion order preserved by every op, export-before-define discipline intact.\n- The last attempt (`generation 15, candidate 0/0`) was **rejected** \u2014 most likely a syntax error or unbalanced parens in the Phase 16 patch, since the host couldn't load any tests. Need to be extra-careful with parentheses and use only conservative primitives.\n- API surfa",
+      "direction": "- **Target phase: Phase 16 \u2014 ordering / sorting / key-extraction helpers.** Same posture as Phases 14/15: pure Aura, derived from existing alist primitives, **insertion order used as the stable tiebreaker** for sorting (matches `kv:invert`/`kv:update-keys` first-occurrence semantics). No FS escapes, no API renames, no exports removed, no internals deleted.\n- Keep all T1\u2013T87 green; extend the smoke suite with **T88\u2013T91b (11 new tests)**, targeting 147/147.\n- **Ops to add (5 new, all pure, all der"
     }
   ],
-  "updated": "2026-08-09T06:51Z",
-  "last_review": "- **Strengths:** 121/121 tests green across Phases 0\u201314 (open/set/get \u2192 filter-values). Alist-of-cons store, defensive skipping of stray non-pair cells, insertion order preserved by every op, pure functional throughout (no FS / network / host escape). Export-before-define discipline intact; API names stable; `kv:pick` walks the store, `kv:rename`/`kv:swap` consistently refuse ambiguous writes, `kv:equal?` distinguishes `#f` from miss, counter ops have init semantics, `kv:invert`/`kv:update-keys` use first-occurrence-wins.\n- **Failure / Risks:** None active \u2014 all current tests pass. The project is now substantially larger than the SPEC's implicit Phase 4 ceiling; we're filling in a self-evolved roadmap with consistent semantics. There's one micro-redundancy risk: `kv:has-value?` is a thin wrapper over `kv:any?`, but the named predicate is the natural companion to `kv:has?` and worth the API surface. `kv:take-while` / `kv:drop-while` are distinct from `kv:filter` / `kv:filter-values` (positional stop vs global keep).\n- **Denseness posture:** Still pure Aura; no new helpers needed beyond re-using `kv:_fold` / `_has` / `any?`; insertion-order preserved by construction in every new op.",
-  "last_direction": "**Target phase: Phase 15 \u2014 lookup / value-presence / span helpers.** Same posture as Phase 14 (pure Aura, derived from existing `_fold`/`_has`/`any?` primitives, no new internals, no FS escapes, no API renames, no exports removed). Keeps T1\u2013T80b green; extends smoke suite to T87 (12 new tests, target 133/133 \u2014 121 + 12 = 133, then plus the T87 composition test = 134/134).\n\n**Ops to add (6 new, all pure, all derive from existing internals; export-before-define preserved):**\n- `kv:find-key`   \u2014 `(store proc) \u2192 key | #f`; first key for which `(proc k v)` is `#t`\n- `kv:find-value` \u2014 `(store proc) \u2192 value | #f`; first value for which `(proc k v)` is `#t`\n- `kv:has-value?` \u2014 `(store val) \u2192 #t | #f`; any entry has structurally-equal value (companion to `kv:has?`)\n- `kv:none?`      \u2014 `(store proc) \u2192 #t | #f`; complement of `kv:any?`; vacuous `#t` on empty\n- `kv:take-while` \u2014 `(store proc) \u2192 store`; keep prefix while `(proc k v)` is `#t`, stop at first miss\n- `kv:drop-while` \u2014 `(store proc) \u2192 s"
+  "updated": "2026-08-09T07:52Z",
+  "last_review": "- 136/136 baseline green across Phases 0\u201315 (open/set/get \u2192 drop-while). Pure Aura alist-of-cons store, defensive skipping of stray non-pair cells, insertion order preserved by every op, export-before-define discipline intact.\n- The last attempt (`generation 15, candidate 0/0`) was **rejected** \u2014 most likely a syntax error or unbalanced parens in the Phase 16 patch, since the host couldn't load any tests. Need to be extra-careful with parentheses and use only conservative primitives.\n- API surface stable since v1; `kv:pick` walks the *store*, `kv:rename`/`kv:swap` refuse ambiguous writes, `kv:equal?` distinguishes stored `#f` from a miss, counter ops have init semantics, `kv:invert`/`kv:update-keys` first-occurrence wins.\n- The lib already relies on `reverse` (host primitive) in `_del` \u2014 once `kv:reverse` is defined later, internal calls would resolve to `kv:reverse`. That hasn't caused regressions so far; trust the existing behaviour.\n- For Phase 16, `kv:sort-by` needs list splicing \u2192 needs an `append`-style helper. Adding `kv:_append` as a private helper (consistent with the `_ref`/`_has`/`_set` family) is the safe choice \u2014 avoids depending on a host `append` that isn't referenced anywhere in the codebase.",
+  "last_direction": "- **Target phase: Phase 16 \u2014 ordering / sorting / key-extraction helpers.** Same posture as Phases 14/15: pure Aura, derived from existing alist primitives, **insertion order used as the stable tiebreaker** for sorting (matches `kv:invert`/`kv:update-keys` first-occurrence semantics). No FS escapes, no API renames, no exports removed, no internals deleted.\n- Keep all T1\u2013T87 green; extend the smoke suite with **T88\u2013T91b (11 new tests)**, targeting 147/147.\n- **Ops to add (5 new, all pure, all derive from existing internals; one new private helper `kv:_append` for list splicing)**:\n  - `kv:sort-by` \u2014 `(store proc)`; stable insertion-sort; new element inserted **after** all existing equal-key entries (boundary = first q with `q-key > nk`), giving source-order stability on ties\n  - `kv:sort`   \u2014 `(store)`; convenience for `kv:sort-by` with identity on `v`\n  - `kv:max-key`\u2014 `(store)` \u2192 `(k . v)` of largest value; first-occurrence wins ties\n  - `kv:min-key`\u2014 `(store)` \u2192 `(k . v)` of smallest"
 }

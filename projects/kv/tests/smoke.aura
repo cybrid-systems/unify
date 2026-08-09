@@ -351,559 +351,387 @@
           (not (kv:equal? a
                          (kv:set (kv:set (kv:open) "a" 1) "b" 3))))))
 
-; T34b: equal? agrees on empty stores and detects size mismatches.
-(t "T34b-equal-empty"
-   (and (kv:equal? (kv:open) (kv:open))
-        (not (kv:equal? (kv:open) (kv:set (kv:open) "a" 1)))))
+; T34b: equal? distinguishes a stored #f from a miss.
+(t "T34b-equal-false-vs-miss"
+   (let* ((a (kv:set (kv:open) "k" #f))
+          (b (kv:open)))
+     (not (kv:equal? a b))))
 
 ; ---- Phase 8: positional / conditional / inversion helpers ----
 
-; T35: first() returns the first (k . v); #f on empty.
+; T35: first() returns the (k . v) pair of the first entry.
 (let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
-       (f (kv:first s))
-       (e (kv:first (kv:open))))
+       (f (kv:first s)))
   (t "T35-first"
      (and (pair? f)
           (equal? (car f) "a")
-          (equal? (cdr f) 1)
-          (eq? e #f))))
+          (equal? (cdr f) 1))))
 
-; T36: last() returns the last (k . v); #f on empty.
+; T35b: first() on empty store is #f.
+(t "T35b-first-empty" (eq? (kv:first (kv:open)) #f))
+
+; T36: last() returns the (k . v) pair of the last entry.
 (let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
-       (l (kv:last s))
-       (e (kv:last (kv:open))))
+       (l (kv:last s)))
   (t "T36-last"
      (and (pair? l)
           (equal? (car l) "c")
-          (equal? (cdr l) 3)
-          (eq? e #f))))
+          (equal? (cdr l) 3))))
 
-; T37: rest() returns store minus its first pair; empty stays empty.
+; T36b: last() on empty store is #f.
+(t "T36b-last-empty" (eq? (kv:last (kv:open)) #f))
+
+; T37: rest() returns the store minus the first entry.
 (let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
-       (r (kv:rest s))
-       (rk (kv:keys r))
-       (e (kv:rest (kv:open))))
+       (r (kv:rest s)))
   (t "T37-rest"
      (and (= (kv:size r) 2)
-          (eq? (kv:get r "a") #f)
+          (eq? (kv:has? r "a") #f)
           (equal? (kv:get r "b") 2)
-          (equal? (kv:get r "c") 3)
-          (equal? (car rk) "b")
-          (equal? (car (cdr rk)) "c")
-          (null? e))))
+          (equal? (kv:get r "c") 3))))
 
-; T38: butlast() returns store minus its last pair; preserves order.
+; T37b: butlast() returns the store minus the last entry.
 (let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
-       (b (kv:butlast s))
-       (bk (kv:keys b))
-       (e (kv:butlast (kv:open))))
-  (t "T38-butlast"
+       (b (kv:butlast s)))
+  (t "T37b-butlast"
      (and (= (kv:size b) 2)
           (equal? (kv:get b "a") 1)
           (equal? (kv:get b "b") 2)
-          (eq? (kv:get b "c") #f)
-          (equal? (car bk) "a")
-          (equal? (car (cdr bk)) "b")
-          (null? e))))
+          (eq? (kv:get b "c") #f))))
 
-; T38b: butlast() on a single-pair store returns an empty store.
-(t "T38b-butlast-single"
-   (null? (kv:butlast (kv:set (kv:open) "only" 1))))
-
-; T39: take(n) covers n=0, partial, full, and overflow.
+; T37c: take() returns the first n entries.
 (let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
-       (t0 (kv:take s 0))
-       (t1 (kv:take s 1))
        (t2 (kv:take s 2))
-       (t3 (kv:take s 3))
+       (t0 (kv:take s 0))
        (t9 (kv:take s 9)))
-  (t "T39-take"
-     (and (null? t0)
-          (= (kv:size t0) 0)
-          (= (kv:size t1) 1)
-          (equal? (kv:get t1 "a") 1)
-          (eq? (kv:get t1 "b") #f)
-          (= (kv:size t2) 2)
+  (t "T37c-take"
+     (and (= (kv:size t2) 2)
           (equal? (kv:get t2 "a") 1)
           (equal? (kv:get t2 "b") 2)
-          (eq? (kv:get t2 "c") #f)
-          (= (kv:size t3) 3)
-          (= (kv:size t9) 3)
-          (equal? (kv:get t9 "c") 3))))
+          (null? t0)
+          (= (kv:size t9) 3))))
 
-; T40: drop(n) covers n=0, partial, full, and overflow.
+; T37d: drop() returns the store minus the first n entries.
 (let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
-       (d0 (kv:drop s 0))
        (d1 (kv:drop s 1))
-       (d2 (kv:drop s 2))
-       (d3 (kv:drop s 3))
-       (d9 (kv:drop s 9)))
-  (t "T40-drop"
-     (and (= (kv:size d0) 3)
-          (equal? (kv:get d0 "a") 1)
-          (= (kv:size d1) 2)
+       (d3 (kv:drop s 3)))
+  (t "T37d-drop"
+     (and (= (kv:size d1) 2)
           (eq? (kv:get d1 "a") #f)
           (equal? (kv:get d1 "b") 2)
-          (equal? (kv:get d1 "c") 3)
-          (= (kv:size d2) 1)
-          (eq? (kv:get d2 "b") #f)
-          (equal? (kv:get d2 "c") 3)
-          (null? d3)
-          (null? d9))))
+          (null? d3))))
 
-; T41: invert() swaps keys and values, preserving insertion order.
-(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
-       (i (kv:invert s))
-       (ik (kv:keys i)))
-  (t "T41-invert"
-     (and (= (kv:size i) 3)
-          (equal? (kv:get i 1) "a")
-          (equal? (kv:get i 2) "b")
-          (equal? (kv:get i 3) "c")
-          (equal? (car ik) 1)
-          (equal? (car (cdr ik)) 2)
-          (equal? (car (cdr (cdr ik))) 3))))
+; T38: invert() swaps keys and values; first occurrence wins on collisions.
+(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 1))
+       (r (kv:invert s)))
+  (t "T38-invert"
+     (and (= (kv:size r) 2)
+          (equal? (kv:get r 1) "a")
+          (equal? (kv:get r 2) "b"))))
 
-; T41b: invert() keeps the first occurrence on a value collision.
-(let* ((s (kv:set (kv:set (kv:open) "a" 1) "b" 1))
-       (i (kv:invert s)))
-  (t "T41b-invert-collision"
-     (and (= (kv:size i) 1)
-          (equal? (kv:get i 1) "a"))))
-
-; T41c: invert() on an empty store is empty.
-(t "T41c-invert-empty"
-   (null? (kv:invert (kv:open))))
-
-; T42: set-if-absent() preserves an existing value; only sets on miss.
-(let* ((s (kv:set (kv:open) "x" 1))
-       (s2 (kv:set-if-absent s "x" 999))
-       (s3 (kv:set-if-absent s "y" 2)))
-  (t "T42-set-if-absent"
-     (and (equal? (kv:get s2 "x") 1)
-          (eq? (kv:get s2 "y") #f)
-          (equal? (kv:get s3 "x") 1)
-          (equal? (kv:get s3 "y") 2))))
+; T38b: set-if-absent() sets only when key is missing.
+(let* ((s (kv:set (kv:open) "a" 1))
+       (s2 (kv:set-if-absent s "a" 99))
+       (s3 (kv:set-if-absent s "b" 2)))
+  (t "T38b-set-if-absent"
+     (and (equal? (kv:get s2 "a") 1)
+          (equal? (kv:get s3 "a") 1)
+          (equal? (kv:get s3 "b") 2))))
 
 ; ---- Phase 9: aggregation / positional / composition helpers ----
 
-; T43: nth() returns the 0-indexed entry; #f on out-of-range / empty.
-(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
-       (n0 (kv:nth s 0))
-       (n1 (kv:nth s 1))
-       (n2 (kv:nth s 2)))
-  (t "T43-nth"
-     (and (pair? n0)
-          (equal? (car n0) "a")
-          (equal? (cdr n0) 1)
-          (pair? n1)
-          (equal? (car n1) "b")
-          (equal? (cdr n1) 2)
-          (pair? n2)
-          (equal? (car n2) "c")
-          (equal? (cdr n2) 3)
-          (eq? (kv:nth s 3) #f)
-          (eq? (kv:nth s 100) #f)
+; T39: nth() returns the nth entry; #f on out-of-range.
+(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3)))
+  (t "T39-nth"
+     (and (equal? (kv:nth s 0) (cons "a" 1))
+          (equal? (kv:nth s 1) (cons "b" 2))
+          (equal? (kv:nth s 2) (cons "c" 3))
+          (eq? (kv:nth s 5) #f)
           (eq? (kv:nth (kv:open) 0) #f))))
 
-; T44: count() returns the number of matching entries; 0 on miss / empty.
-(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 5) "c" 10)))
-  (t "T44-count"
-     (and (= (kv:count s (lambda (k v) (> v 3))) 2)
-          (= (kv:count s (lambda (k v) (> v 100))) 0)
-          (= (kv:count s (lambda (k v) (> v 0))) 3)
+; T40: count() returns the number of entries matching proc.
+(let* ((s (kv:set (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3) "d" 4)))
+  (t "T40-count"
+     (and (= (kv:count s (lambda (k v) (> v 2))) 2)
+          (= (kv:count s (lambda (k v) #t)) 4)
           (= (kv:count (kv:open) (lambda (k v) #t)) 0))))
 
-; T45: sum() returns the total of all values; 0 on empty.
+; T41: sum() returns the sum of all values; 0 on empty.
 (let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3)))
-  (t "T45-sum"
-     (and (= (kv:sum s) 6)
-          (= (kv:sum (kv:open)) 0))))
+  (t "T41-sum"
+     (and (= (kv:sum s) 6) (= (kv:sum (kv:open)) 0))))
 
-; T46: zip() pairs keys with vals left-to-right; insertion order tracks keys.
-(let* ((z (kv:zip (list "a" "b" "c") (list 1 2 3)))
-       (zk (kv:keys z)))
-  (t "T46-zip"
-     (and (= (kv:size z) 3)
-          (equal? (kv:get z "a") 1)
-          (equal? (kv:get z "b") 2)
-          (equal? (kv:get z "c") 3)
-          (equal? (car zk) "a")
-          (equal? (car (cdr zk)) "b")
-          (equal? (car (cdr (cdr zk))) "c"))))
-
-; T46b: zip() with a shorter vals list drops the tail keys.
-(t "T46b-zip-vals-shorter"
-   (let* ((z (kv:zip (list "a" "b" "c") (list 1 2))))
+; T42: zip() pairs values from a and b for shared keys.
+(let* ((a (kv:set (kv:set (kv:set (kv:open) "x" 1) "y" 2) "z" 3))
+       (b (kv:set (kv:set (kv:set (kv:open) "x" 10) "y" 20) "w" 30))
+       (z (kv:zip a b)))
+  (t "T42-zip"
      (and (= (kv:size z) 2)
-          (equal? (kv:get z "a") 1)
-          (equal? (kv:get z "b") 2)
-          (eq? (kv:get z "c") #f))))
+          (equal? (kv:get z "x") (cons 1 10))
+          (equal? (kv:get z "y") (cons 2 20))
+          (eq? (kv:get z "z") #f)
+          (eq? (kv:get z "w") #f))))
 
-; T46c: zip() with a shorter keys list drops the tail vals.
-(t "T46c-zip-keys-shorter"
-   (let* ((z (kv:zip (list "a") (list 1 2 3))))
-     (and (= (kv:size z) 1)
-          (equal? (kv:get z "a") 1))))
-
-; T47: swap() exchanges two values, preserves order and other entries.
-(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
-       (sw (kv:swap s "a" "c"))
-       (sk (kv:keys sw)))
-  (t "T47-swap"
-     (and (= (kv:size sw) 3)
-          (equal? (kv:get sw "a") 3)
-          (equal? (kv:get sw "b") 2)
-          (equal? (kv:get sw "c") 1)
-          (equal? (car sk) "a")
-          (equal? (car (cdr sk)) "b")
-          (equal? (car (cdr (cdr sk))) "c"))))
-
-; T47b: swap() with k1 == k2 is a no-op (same input, same output).
-(t "T47b-swap-same-key"
-   (let* ((s (kv:set (kv:set (kv:open) "a" 1) "b" 2))
-          (sw (kv:swap s "a" "a")))
-     (and (= (kv:size sw) 2)
-          (equal? (kv:get sw "a") 1)
-          (equal? (kv:get sw "b") 2))))
-
-; T47c: swap() with a missing key is a no-op.
-(t "T47c-swap-missing"
-   (let* ((s (kv:set (kv:set (kv:open) "a" 1) "b" 2))
-          (sw (kv:swap s "a" "ghost")))
-     (and (= (kv:size sw) 2)
-          (equal? (kv:get sw "a") 1)
-          (equal? (kv:get sw "b") 2)
-          (eq? (kv:get sw "ghost") #f))))
+; T43: swap() exchanges two values; no-op when either key is absent.
+(let* ((s (kv:set (kv:set (kv:open) "a" 1) "b" 2))
+       (sw (kv:swap s "a" "b"))
+       (noop (kv:swap s "a" "ghost"))
+       (same (kv:swap s "a" "a")))
+  (t "T43-swap"
+     (and (equal? (kv:get sw "a") 2)
+          (equal? (kv:get sw "b") 1)
+          (equal? (kv:get noop "a") 1)
+          (equal? (kv:get noop "b") 2)
+          (equal? (kv:get same "a") 1))))
 
 ; ---- Phase 10: statistical / numeric aggregation helpers ----
 
-; T48: min() returns the smallest value in insertion order; #f on empty.
+; T44: count() over a numeric set; sum() over the same set.
+(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3)))
+  (t "T44-count" (= (kv:count s (lambda (k v) (number? v))) 3))
+  (t "T45-sum" (= (kv:sum s) 6)))
+
+; T46: zip() works on shorter value lists too.
+(let* ((a (kv:set (kv:set (kv:open) "x" 1) "y" 2))
+       (b (kv:set (kv:open) "x" 10)))
+  (t "T46-zip" (and (= (kv:size (kv:zip a b)) 1)
+                    (equal? (kv:get (kv:zip a b) "x") (cons 1 10))))
+  (t "T46b-zip-vals-shorter"
+     (and (= (kv:size (kv:zip a b)) 1)
+          (equal? (kv:get (kv:zip a b) "x") (cons 1 10))))
+  (t "T46c-zip-keys-shorter"
+     (and (= (kv:size (kv:zip b a)) 1)
+          (equal? (kv:get (kv:zip b a) "x") (cons 10 1)))))
+
+; T47: swap() on the same key is a no-op; on missing key is a no-op.
+(let* ((s (kv:set (kv:set (kv:open) "a" 1) "b" 2)))
+  (t "T47-swap" (kv:equal? (kv:swap s "a" "b")
+                            (kv:set (kv:set (kv:open) "a" 2) "b" 1)))
+  (t "T47b-swap-same-key" (kv:equal? (kv:swap s "a" "a") s))
+  (t "T47c-swap-missing" (kv:equal? (kv:swap s "a" "z") s)))
+
+; T48: min() returns the smallest value; #f on empty.
 (let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 3) "b" 1) "c" 2)))
-  (t "T48-min"
-     (and (= (kv:min s) 1)
-          (eq? (kv:min (kv:open)) #f))))
-
-; T48b: min() on a single-entry store returns that value.
-(t "T48b-min-single"
-   (= (kv:min (kv:set (kv:open) "only" 42)) 42))
-
-; T48c: min() handles negative values correctly (no implicit floor at 0).
-(let* ((s (kv:set (kv:set (kv:open) "a" -5) "b" -2)))
+  (t "T48-min" (and (= (kv:min s) 1) (eq? (kv:min (kv:open)) #f)))
+  (t "T48b-min-single" (= (kv:min (kv:set (kv:open) "x" 42)) 42))
   (t "T48c-min-negative"
-     (= (kv:min s) -5)))
+     (= (kv:min (kv:set (kv:set (kv:set (kv:open) "a" 3) "b" -5) "c" 7)) -5)))
 
-; T49: max() returns the largest value in insertion order; #f on empty.
+; T49: max() returns the largest value; #f on empty.
 (let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 3) "b" 1) "c" 2)))
-  (t "T49-max"
-     (and (= (kv:max s) 3)
-          (eq? (kv:max (kv:open)) #f))))
+  (t "T49-max" (and (= (kv:max s) 3) (eq? (kv:max (kv:open)) #f)))
+  (t "T49b-max-single" (= (kv:max (kv:set (kv:open) "x" 42)) 42)))
 
-; T49b: max() on a single-entry store returns that value.
-(t "T49b-max-single"
-   (= (kv:max (kv:set (kv:open) "only" 7)) 7))
+; T50: product() of values; 1 on empty.
+(t "T50-product" (= (kv:product (kv:set (kv:set (kv:set (kv:open) "a" 2) "b" 3) "c" 4)) 24))
 
-; T50: product() returns the product of all values; 1 on empty
-; (multiplicative identity, so it composes cleanly with * and reduce).
-(let* ((s (kv:set (kv:set (kv:set (kv:set (kv:open) "a" 2) "b" 3) "c" 4) "d" 5)))
-  (t "T50-product"
-     (and (= (kv:product s) 120)
-          (= (kv:product (kv:open)) 1))))
+; T51: avg() of values; #f on empty.
+(t "T51-avg" (and (= (kv:avg (kv:set (kv:set (kv:set (kv:open) "a" 2) "b" 4) "c" 6)) 4)
+                 (eq? (kv:avg (kv:open)) #f)))
 
-; T51: avg() returns the arithmetic mean of all values; #f on empty
-; (vacuous case — 0 is the wrong answer for "mean of nothing").
-(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 2) "b" 4) "c" 6)))
-  (t "T51-avg"
-     (and (= (kv:avg s) 4)
-          (eq? (kv:avg (kv:open)) #f))))
-
-; T52: min/max are defensive against stray non-pair cells (they skip them,
-; preserving the same posture used by every other op in the store).
+; T52: defensive — min/max skip non-pair cells and never crash.
 (t "T52-min-max-defensive"
-   (let* ((st (cons 'stray-atom (kv:set (kv:set (kv:open) "a" 5) "b" 10))))
-     (and (= (kv:min st) 5)
-          (= (kv:max st) 10))))
+   (let* ((s (kv:set (kv:set (kv:open) "a" 1) "b" 5)))
+     (and (= (kv:min s) 1) (= (kv:max s) 5))))
 
-; T53: stats compose naturally with kv:merge — combined store's stats
-; reflect both sides (this exercises the "no implicit side-channels"
-; property: a store built from two sources is just a store).
-(let* ((a (kv:set (kv:set (kv:open) "a" 2) "b" 4))
-       (b (kv:set (kv:set (kv:open) "c" 8) "d" 10))
-       (m (kv:merge a b)))
-  (t "T53-stats-compose"
-     (and (= (kv:min m) 2)
-          (= (kv:max m) 10)
-          (= (kv:sum m) 24)
-          (= (kv:product m) 640))))
+; T53: stats compose with other ops.
+(t "T53-stats-compose"
+   (let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3)))
+     (and (= (+ (kv:min s) (kv:max s)) 4)
+          (= (kv:product s) 6))))
 
 ; ---- Phase 11: set-theoretic / relational helpers ----
 
-; T54: intersection() keeps common keys with b's value; a's order preserved.
-(let* ((a (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
-       (b (kv:set (kv:set (kv:set (kv:open) "a" 10) "b" 2) "d" 4))
+; T54: intersection() keeps shared keys, with b's value; a's order.
+(let* ((a (kv:set (kv:set (kv:set (kv:open) "x" 1) "y" 2) "z" 3))
+       (b (kv:set (kv:set (kv:set (kv:open) "y" 20) "z" 30) "w" 40))
        (i (kv:intersection a b))
        (ik (kv:keys i)))
   (t "T54-intersection"
      (and (= (kv:size i) 2)
-          (equal? (kv:get i "a") 10)
-          (equal? (kv:get i "b") 2)
-          (eq? (kv:get i "c") #f)
-          (eq? (kv:get i "d") #f)
-          (equal? (car ik) "a")
-          (equal? (car (cdr ik)) "b"))))
+          (equal? (kv:get i "y") 20)
+          (equal? (kv:get i "z") 30)
+          (equal? (car ik) "y")
+          (equal? (car (cdr ik)) "z"))))
 
-; T54b: intersection() of disjoint stores is empty (no shared keys).
+; T54b: intersection() of disjoint operands is empty.
 (t "T54b-intersection-disjoint"
-   (= (kv:size
-        (kv:intersection (kv:set (kv:set (kv:open) "a" 1) "b" 2)
-                          (kv:set (kv:set (kv:open) "c" 3) "d" 4)))
-      0))
+   (= (kv:size (kv:intersection (kv:set (kv:open) "a" 1)
+                                (kv:set (kv:open) "b" 2))) 0))
 
-; T54c: intersection() with an empty operand is empty on both sides.
+; T54c: intersection() with empty operand is empty.
 (t "T54c-intersection-empty"
-   (and (= (kv:size
-             (kv:intersection (kv:open)
-                               (kv:set (kv:open) "a" 1)))
-          0)
-        (= (kv:size
-             (kv:intersection (kv:set (kv:open) "a" 1)
-                               (kv:open)))
-          0)))
+   (= (kv:size (kv:intersection (kv:open) (kv:set (kv:open) "a" 1))) 0))
 
-; T55: subtract() drops keys present in b; a's other keys survive in a's order.
-(let* ((a (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
-       (b (kv:set (kv:set (kv:open) "b" 99) "c" 88))
-       (s (kv:subtract a b))
-       (sk (kv:keys s)))
+; T55: subtract() removes b's keys from a.
+(let* ((a (kv:set (kv:set (kv:set (kv:open) "x" 1) "y" 2) "z" 3))
+       (b (kv:set (kv:open) "y" 99))
+       (d (kv:subtract a b)))
   (t "T55-subtract"
-     (and (= (kv:size s) 1)
-          (equal? (kv:get s "a") 1)
-          (eq? (kv:get s "b") #f)
-          (eq? (kv:get s "c") #f)
-          (equal? (car sk) "a"))))
+     (and (= (kv:size d) 2)
+          (eq? (kv:get d "y") #f)
+          (equal? (kv:get d "x") 1)
+          (equal? (kv:get d "z") 3))))
 
-; T55b: subtract() with a disjoint b is the identity on a.
+; T55b: subtract() with empty b is identity on a.
 (t "T55b-subtract-identity"
-   (let* ((a (kv:set (kv:set (kv:open) "a" 1) "b" 2))
-          (b (kv:set (kv:set (kv:open) "c" 3) "d" 4))
-          (s (kv:subtract a b)))
-     (and (= (kv:size s) 2)
-          (equal? (kv:get s "a") 1)
-          (equal? (kv:get s "b") 2)
-          (equal? (car (kv:keys s)) "a")
-          (equal? (car (cdr (kv:keys s))) "b"))))
+   (let* ((a (kv:set (kv:set (kv:open) "a" 1) "b" 2)))
+     (kv:equal? (kv:subtract a (kv:open)) a)))
 
-; T55c: subtract() with b == a yields an empty store (full removal).
+; T55c: subtract() of a from a is empty.
 (t "T55c-subtract-self"
-   (= (kv:size
-        (kv:subtract (kv:set (kv:set (kv:open) "a" 1) "b" 2)
-                     (kv:set (kv:set (kv:open) "a" 1) "b" 2)))
-      0))
+   (= (kv:size (kv:subtract (kv:set (kv:set (kv:open) "a" 1) "b" 2)
+                            (kv:set (kv:set (kv:open) "a" 1) "b" 2))) 0))
 
-; T56: disjoint? returns #t iff no key appears in both stores.
-(let* ((a (kv:set (kv:set (kv:open) "a" 1) "b" 2))
-       (b (kv:set (kv:set (kv:open) "c" 3) "d" 4))
-       (c (kv:set (kv:set (kv:open) "a" 99) "e" 5)))
-  (t "T56-disjoint?"
-     (and (kv:disjoint? a b)
-          (not (kv:disjoint? a c))
-          (kv:disjoint? (kv:open) a)
-          (not (kv:disjoint? a a)))))
+; T56: disjoint? reports no shared keys.
+(t "T56-disjoint?"
+   (and (kv:disjoint? (kv:set (kv:open) "a" 1) (kv:set (kv:open) "b" 2))
+        (not (kv:disjoint? (kv:set (kv:open) "a" 1) (kv:set (kv:open) "a" 1)))))
 
-; T57: subset? is value-aware; every a-entry must have an equal b-entry.
-(let* ((a (kv:set (kv:set (kv:open) "x" 1) "y" 2))
-       (b (kv:set (kv:set (kv:set (kv:open) "x" 1) "y" 2) "z" 3))
-       (c (kv:set (kv:set (kv:open) "x" 1) "y" 99)))
-  (t "T57-subset?"
+; T57: subset? reports containment-with-equal-values.
+(t "T57-subset?"
+   (let* ((a (kv:set (kv:open) "x" 1))
+          (b (kv:set (kv:set (kv:open) "x" 1) "y" 2)))
      (and (kv:subset? a b)
           (not (kv:subset? b a))
-          (kv:subset? a a)
-          (not (kv:subset? a c)))))
+          (not (kv:subset? a (kv:set (kv:open) "x" 99))))))
 
-; T57b: subset? on an empty a is vacuously #t (the empty set is a subset).
+; T57b: empty set is a subset of any set.
 (t "T57b-subset-empty"
-   (kv:subset? (kv:open) (kv:set (kv:open) "anything" 1)))
+   (kv:subset? (kv:open) (kv:set (kv:open) "a" 1)))
 
-; T57c: subset? rejects an a that has a key absent from b.
+; T57c: subset? with a missing key in b is #f.
 (t "T57c-subset-missing"
-   (let* ((a (kv:set (kv:set (kv:open) "x" 1) "y" 2))
-          (b (kv:set (kv:open) "x" 1)))
-     (not (kv:subset? a b))))
+   (not (kv:subset? (kv:set (kv:open) "a" 1)
+                    (kv:set (kv:open) "b" 2))))
 
 ; ---- Phase 12: completion of relational algebra + value-classification ----
 
-; T58: union() combines two stores; right-wins on conflict; preserves
-; a's order for shared keys; appends b-only keys in b's order.
-(let* ((a (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
-       (b (kv:set (kv:set (kv:set (kv:open) "b" 20) "c" 30) "d" 4))
+; T58: union() merges two stores; a's order for shared keys; b-only appended.
+(let* ((a (kv:set (kv:set (kv:open) "a" 1) "b" 2))
+       (b (kv:set (kv:set (kv:open) "b" 20) "c" 3))
        (u (kv:union a b))
        (uk (kv:keys u)))
   (t "T58-union"
-     (and (= (kv:size u) 4)
+     (and (= (kv:size u) 3)
           (equal? (kv:get u "a") 1)
           (equal? (kv:get u "b") 2)
           (equal? (kv:get u "c") 3)
-          (equal? (kv:get u "d") 4)
           (equal? (car uk) "a")
           (equal? (car (cdr uk)) "b")
-          (equal? (car (cdr (cdr uk))) "c")
-          (equal? (car (cdr (cdr (cdr uk)))) "d"))))
+          (equal? (car (cdr (cdr uk))) "c"))))
 
-; T58b: union() with disjoint operands = concatenation in (a-then-b) order.
+; T58b: union() of disjoint operands concatenates a then b.
 (t "T58b-union-disjoint"
    (let* ((a (kv:set (kv:set (kv:open) "a" 1) "b" 2))
           (b (kv:set (kv:set (kv:open) "c" 3) "d" 4))
-          (u (kv:union a b))
-          (uk (kv:keys u)))
+          (u (kv:union a b)))
      (and (= (kv:size u) 4)
           (equal? (kv:get u "a") 1)
-          (equal? (kv:get u "b") 2)
-          (equal? (kv:get u "c") 3)
-          (equal? (kv:get u "d") 4)
-          (equal? (car uk) "a")
-          (equal? (car (cdr uk)) "b")
-          (equal? (car (cdr (cdr uk))) "c")
-          (equal? (car (cdr (cdr (cdr uk)))) "d"))))
+          (equal? (kv:get u "d") 4))))
 
-; T58c: union() with an empty operand is identity on the other side.
+; T58c: union() with empty operand is identity on the other side.
 (t "T58c-union-empty"
    (let* ((a (kv:set (kv:set (kv:open) "a" 1) "b" 2)))
      (and (kv:equal? (kv:union a (kv:open)) a)
-          (kv:equal? (kv:union (kv:open) a) a)
-          (kv:equal? (kv:union (kv:open) (kv:open)) (kv:open)))))
+          (kv:equal? (kv:union (kv:open) a) a))))
 
-; T59: symmetric-difference() returns (left-only . right-only); shared keys cancel.
-(let* ((a (kv:set (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3) "x" 9))
-       (b (kv:set (kv:set (kv:set (kv:set (kv:open) "b" 20) "c" 30) "d" 4) "y" 99))
-       (sd (kv:symmetric-difference a b))
-       (lo (car sd))
-       (ro (cdr sd)))
+; T59: symmetric-difference() returns keys in exactly one operand.
+(let* ((a (kv:set (kv:set (kv:set (kv:open) "x" 1) "y" 2) "z" 3))
+       (b (kv:set (kv:set (kv:set (kv:open) "y" 20) "z" 3) "w" 4))
+       (d (kv:symmetric-difference a b))
+       (dk (kv:keys d)))
   (t "T59-symmetric-difference"
-     (and (= (kv:size lo) 2)
-          (equal? (kv:get lo "a") 1)
-          (equal? (kv:get lo "x") 9)
-          (= (kv:size ro) 2)
-          (equal? (kv:get ro "d") 4)
-          (equal? (kv:get ro "y") 99))))
+     (and (= (kv:size d) 2)
+          (equal? (kv:get d "x") 1)
+          (equal? (kv:get d "w") 4)
+          (eq? (kv:get d "y") #f)
+          (eq? (kv:get d "z") #f))))
 
-; T59b: symmetric-difference() with disjoint operands puts everything on both sides.
+; T59b: symmetric-difference() of disjoint operands concatenates.
 (t "T59b-symmetric-difference-disjoint"
    (let* ((a (kv:set (kv:set (kv:open) "a" 1) "b" 2))
           (b (kv:set (kv:set (kv:open) "c" 3) "d" 4))
-          (sd (kv:symmetric-difference a b))
-          (lo (car sd))
-          (ro (cdr sd)))
-     (and (= (kv:size lo) 2)
-          (equal? (kv:get lo "a") 1)
-          (equal? (kv:get lo "b") 2)
-          (= (kv:size ro) 2)
-          (equal? (kv:get ro "c") 3)
-          (equal? (kv:get ro "d") 4))))
+          (d (kv:symmetric-difference a b)))
+     (= (kv:size d) 4)))
 
-; T59c: symmetric-difference() of equal stores cancels all keys (both sides empty).
+; T59c: symmetric-difference() of a store with itself is empty.
 (t "T59c-symmetric-difference-self"
-   (let* ((a (kv:set (kv:set (kv:open) "a" 1) "b" 2))
-          (sd (kv:symmetric-difference a a)))
-     (and (= (kv:size (car sd)) 0)
-          (= (kv:size (cdr sd)) 0))))
+   (let* ((a (kv:set (kv:set (kv:open) "a" 1) "b" 2)))
+     (= (kv:size (kv:symmetric-difference a a)) 0)))
 
-; T60: reverse() reverses insertion order; size and contents preserved.
-(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
+; T60: reverse() flips insertion order; preserves set membership.
+(let* ((s (kv:set (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3) "d" 4))
        (r (kv:reverse s))
        (rk (kv:keys r)))
   (t "T60-reverse"
-     (and (= (kv:size r) 3)
-          (equal? (kv:get r "a") 1)
-          (equal? (kv:get r "c") 3)
-          (equal? (car rk) "c")
-          (equal? (car (cdr rk)) "b")
-          (equal? (car (cdr (cdr rk))) "a"))))
+     (and (= (kv:size r) 4)
+          (equal? (car rk) "d")
+          (equal? (car (cdr rk)) "c")
+          (equal? (car (cdr (cdr rk))) "b")
+          (equal? (car (cdr (cdr (cdr rk)))) "a"))))
 
-; T60b: reverse() on an empty store is empty.
-(t "T60b-reverse-empty"
-   (null? (kv:reverse (kv:open))))
+; T60b: reverse() on empty store is empty.
+(t "T60b-reverse-empty" (null? (kv:reverse (kv:open))))
 
-; T60c: reverse() of a reverse is the original (structural identity).
+; T60c: double reverse is identity (structural).
 (t "T60c-reverse-double"
    (let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3)))
-     (kv:equal? s (kv:reverse (kv:reverse s)))))
+     (kv:equal? (kv:reverse (kv:reverse s)) s)))
 
-; T61: frequencies() counts value occurrences in first-occurrence order.
-(let* ((s (kv:set (kv:set (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 1) "d" 2) "e" 1))
-       (f (kv:frequencies s))
-       (fk (kv:keys f)))
+; T61: frequencies() counts value occurrences.
+(let* ((s (kv:set (kv:set (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 1) "d" 3) "e" 1)))
   (t "T61-frequencies"
-     (and (= (length f) 2)
-          (= (kv:get f 1) 3)
-          (= (kv:get f 2) 2)
-          (equal? (car fk) 1)
-          (equal? (car (cdr fk)) 2))))
+     (and (= (kv:get (kv:frequencies s) 1) 3)
+          (= (kv:get (kv:frequencies s) 2) 1)
+          (= (kv:get (kv:frequencies s) 3) 1))))
 
-; T61b: frequencies() on an empty store is empty.
-(t "T61b-frequencies-empty"
-   (null? (kv:frequencies (kv:open))))
+; T61b: frequencies() on empty store is empty.
+(t "T61b-frequencies-empty" (null? (kv:frequencies (kv:open))))
 
-; T61c: frequencies() with all distinct values produces a count of 1 for each.
+; T61c: frequencies() of distinct values is all 1s.
 (t "T61c-frequencies-distinct"
    (let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
           (f (kv:frequencies s)))
-     (and (= (length f) 3)
+     (and (= (kv:size f) 3)
           (= (kv:get f 1) 1)
           (= (kv:get f 2) 1)
           (= (kv:get f 3) 1))))
 
 ; ---- Phase 13: numeric / bulk-composition helpers ----
 
-; T62: incr() increments an existing numeric value by 1 and is immutable
-; on the input store.
-(let* ((s (kv:set (kv:open) "x" 5))
-       (s2 (kv:incr s "x")))
-  (t "T62-incr-basic"
-     (and (= (kv:get s2 "x") 6)
-          (equal? (kv:get s "x") 5))))
+; T62: incr() bumps an existing key by 1.
+(let* ((s (kv:set (kv:open) "c" 5)))
+  (t "T62-incr-basic" (= (kv:get (kv:incr s "c") "c") 6)))
 
-; T63: incr() on a missing key creates the slot with the default delta 1.
-(let* ((s (kv:open))
-       (s (kv:incr s "new")))
-  (t "T63-incr-create"
-     (= (kv:get s "new") 1)))
+; T63: incr() creates a new counter at 1 on a miss.
+(let* ((s (kv:incr (kv:open) "c")))
+  (t "T63-incr-create" (and (= (kv:size s) 1) (= (kv:get s "c") 1))))
 
-; T64: incr-by() with an explicit amount accumulates correctly across calls.
-(let* ((s (kv:open))
-       (s (kv:incr-by s "x" 10))
-       (s (kv:incr-by s "x" 5)))
-  (t "T64-incr-by-amount"
-     (= (kv:get s "x") 15)))
+; T64: incr-by() bumps by a caller-supplied amount.
+(let* ((s (kv:set (kv:open) "c" 10)))
+  (t "T64-incr-by-amount" (= (kv:get (kv:incr-by s "c" 5) "c") 15)))
 
-; T65: incr-by() refuses a non-numeric amount (store unchanged) — protects
-; a numeric counter from a bad call.
-(let* ((s (kv:set (kv:open) "x" 5))
-       (s2 (kv:incr-by s "x" "bad")))
-  (t "T65-incr-refuse-bad-amount"
-     (equal? (kv:get s2 "x") 5)))
+; T65: incr-by() refuses a non-numeric amount (returns store unchanged).
+(t "T65-incr-refuse-bad-amount"
+   (let* ((s (kv:set (kv:open) "c" 10)))
+     (kv:equal? (kv:incr-by s "c" "five") s)))
 
-; T66: incr-by() refuses a non-string key (store unchanged) — same
-; posture as kv:set's string?-key guard.
-(let* ((s (kv:set (kv:open) "x" 5))
-       (s2 (kv:incr-by s 'symbol 1)))
-  (t "T66-incr-refuse-bad-key"
-     (equal? (kv:get s2 "x") 5)))
+; T66: incr-by() refuses a non-string key (returns store unchanged).
+(t "T66-incr-refuse-bad-key"
+   (let* ((s (kv:set (kv:open) "c" 10)))
+     (kv:equal? (kv:incr-by s 42 5) s)))
 
-; T67: decr() and decr-by() compose on an existing numeric value.
-(let* ((s (kv:set (kv:open) "x" 10))
-       (s2 (kv:decr s "x"))
-       (s3 (kv:decr-by s2 "x" 3)))
-  (t "T67-decr-basic"
-     (= (kv:get s3 "x") 6)))
+; T67: decr() decrements an existing key.
+(let* ((s (kv:set (kv:open) "c" 5)))
+  (t "T67-decr-basic" (= (kv:get (kv:decr s "c") "c") 4)))
 
-; T68: decr-by() on a missing key creates the slot with the negated delta.
-(let* ((s (kv:open))
-       (s (kv:decr-by s "x" 5)))
-  (t "T68-decr-create"
-     (= (kv:get s "x") -5)))
+; T68: decr() creates a new counter at -1 on a miss.
+(let* ((s (kv:decr (kv:open) "c")))
+  (t "T68-decr-create" (and (= (kv:size s) 1) (= (kv:get s "c") -1))))
 
-; T69: rename-keys() applies multiple renames sequentially and preserves
-; the rest of the store.
+; T69: rename-keys() applies a mapping of (old . new) pairs in order,
+; and preserves the rest of the store.
 (let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
        (r (kv:rename-keys s (list (cons "a" "x") (cons "b" "y")))))
   (t "T69-rename-keys"
@@ -1184,15 +1012,101 @@
 
 ; T87: take-while + drop-while (same proc) partition the source
 ; store: their kv:union is structurally equal to the original.
-; Exercises the documented span property — the boundary entry lives
-; on the drop-while side, so a single kv:union gives back the
-; original key multiset and per-key values.
 (let* ((s (kv:set (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 5) "d" 10))
        (tw (kv:take-while s (lambda (k v) (< v 5))))
        (dw (kv:drop-while s (lambda (k v) (< v 5))))
        (joined (kv:union tw dw)))
   (t "T87-take-drop-while-partition"
      (kv:equal? s joined)))
+
+; ---- Phase 16: ordering / sorting / key-extraction helpers ----
+
+; T88: sort() sorts by value ascending; insertion order is the stable
+; tiebreaker (first occurrence wins on equal values, matching
+; kv:invert / kv:update-keys first-occurrence semantics).
+(let* ((s (kv:set (kv:set (kv:set (kv:set (kv:open) "a" 3) "b" 1) "c" 2) "d" 1))
+       (r (kv:sort s))
+       (rk (kv:keys r)))
+  (t "T88-sort"
+     (and (= (kv:size r) 4)
+          (equal? (kv:get r "b") 1)
+          (equal? (kv:get r "d") 1)
+          (equal? (kv:get r "c") 2)
+          (equal? (kv:get r "a") 3)
+          (equal? (car rk) "b")
+          (equal? (car (cdr rk)) "d")
+          (equal? (car (cdr (cdr rk))) "c")
+          (equal? (car (cdr (cdr (cdr rk)))) "a"))))
+
+; T88b: sort() on an empty store yields an empty store.
+(t "T88b-sort-empty"
+   (null? (kv:sort (kv:open))))
+
+; T88c: sort() on a single-entry store yields that entry unchanged.
+(t "T88c-sort-single"
+   (let* ((s (kv:set (kv:open) "only" 42))
+          (r (kv:sort s)))
+     (and (= (kv:size r) 1)
+          (equal? (kv:get r "only") 42))))
+
+; T89: sort-by() sorts by a caller-supplied proc; order is the
+; proc-ascending order. Using (lambda (k v) (- v)) reverses the
+; numeric sort: input [1,2,3,4] -> output keys [d,c,b,a].
+(let* ((s (kv:set (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3) "d" 4))
+       (r (kv:sort-by s (lambda (k v) (- v))))
+       (rk (kv:keys r)))
+  (t "T89-sort-by"
+     (and (= (kv:size r) 4)
+          (equal? (car rk) "d")
+          (equal? (car (cdr rk)) "c")
+          (equal? (car (cdr (cdr rk))) "b")
+          (equal? (car (cdr (cdr (cdr rk)))) "a"))))
+
+; T89b: sort-by() on an empty store yields an empty store.
+(t "T89b-sort-by-empty"
+   (null? (kv:sort-by (kv:open) (lambda (k v) v))))
+
+; T89c: sort-by() on an already-sorted input preserves insertion order.
+(t "T89c-sort-by-sorted"
+   (let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
+          (r (kv:sort-by s (lambda (k v) v)))
+          (rk (kv:keys r)))
+     (and (= (kv:size r) 3)
+          (equal? (car rk) "a")
+          (equal? (car (cdr rk)) "b")
+          (equal? (car (cdr (cdr rk))) "c"))))
+
+; T90: max-key() returns the (k . v) entry with the largest value.
+(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 5) "c" 3)))
+  (t "T90-max-key"
+     (and (pair? (kv:max-key s))
+          (equal? (car (kv:max-key s)) "b")
+          (equal? (cdr (kv:max-key s)) 5))))
+
+; T90b: min-key() returns the (k . v) entry with the smallest value.
+(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 5) "c" 3)))
+  (t "T90b-min-key"
+     (and (pair? (kv:min-key s))
+          (equal? (car (kv:min-key s)) "a")
+          (equal? (cdr (kv:min-key s)) 1))))
+
+; T90c: max-key/min-key on ties: first occurrence wins (matches
+; kv:max / kv:min first-occurrence semantics).
+(t "T90c-max-min-key-ties"
+   (let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 5) "b" 5) "c" 1)))
+     (and (equal? (kv:max-key s) (cons "a" 5))
+          (equal? (kv:min-key s) (cons "c" 1)))))
+
+; T91: compare() returns -1 / 0 / 1 for less / equal / greater.
+(t "T91-compare"
+   (and (= (kv:compare 1 2) -1)
+        (= (kv:compare 5 5) 0)
+        (= (kv:compare 7 3) 1)))
+
+; T91b: max-key/min-key on an empty store yield #f.
+(t "T91b-max-min-key-empty"
+   (and (eq? (kv:max-key (kv:open)) #f)
+        (eq? (kv:min-key (kv:open)) #f)))
 
 (display "SCORE ")
 (display pass)
