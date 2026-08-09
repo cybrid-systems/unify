@@ -2,14 +2,11 @@
 
 | field | value |
 |-------|-------|
-| updated | 2026-08-09T04:03Z |
-| generation | 6 |
-| factor | 13 |
-| body | `(lambda (x) (* x 13))` |
-| decision | commit |
-| source | llm |
+| updated | 2026-08-09T04:05Z |
+| generation | 7 |
+| factor | 15 |
+| body | `(lambda (x) (* x 15))` |
+| decision | select |
+| mode | multi-sandbox-select (query→mutate, K candidates) |
 
-**This is real self-evolution state.**  
-`examples/02-live-evolve` is only in-memory soak (no file / no git).
-
-Advance: `./scripts/durable-evolve.sh` (also each continuous cycle).
+See `notes/evolution-model.md`. Entry: `./scripts/evolve.sh`.

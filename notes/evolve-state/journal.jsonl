@@ -4,3 +4,4 @@
 {"ts": "2026-08-09T04:01Z", "generation": 4, "factor": 9, "decision": "commit", "source": "llm", "body": "(lambda (x) (* x 9))"}
 {"ts": "2026-08-09T04:02Z", "generation": 5, "factor": 11, "decision": "commit", "source": "llm", "body": "(lambda (x) (* x 11))"}
 {"ts": "2026-08-09T04:03Z", "generation": 6, "factor": 13, "decision": "commit", "source": "llm", "body": "(lambda (x) (* x 13))"}
+{"ts": "2026-08-09T04:05Z", "from_generation": 6, "to_generation": 7, "factor": 15, "body": "(lambda (x) (* x 15))", "decision": "select", "candidates_tried": 1, "candidates_n": 1, "mode": "multi-sandbox-select"}

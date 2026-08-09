@@ -1,11 +1,11 @@
 {
-  "generation": 6,
-  "factor": 13,
-  "body": "(lambda (x) (* x 13))",
+  "generation": 7,
+  "factor": 15,
+  "body": "(lambda (x) (* x 15))",
   "status": "ok",
-  "updated": "2026-08-09T04:03Z",
-  "last_decision": "commit",
-  "last_source": "llm",
+  "updated": "2026-08-09T04:05Z",
+  "last_decision": "select",
+  "last_mode": "multi-sandbox-select",
   "history": [
     {
       "ts": "2026-08-09T03:59Z",
@@ -60,6 +60,17 @@
       "body": "(lambda (x) (* x 13))",
       "decision": "commit",
       "source": "llm"
+    },
+    {
+      "ts": "2026-08-09T04:05Z",
+      "from_generation": 6,
+      "to_generation": 7,
+      "factor": 15,
+      "body": "(lambda (x) (* x 15))",
+      "decision": "select",
+      "candidates_tried": 1,
+      "candidates_n": 1,
+      "mode": "multi-sandbox-select"
     }
   ]
 }

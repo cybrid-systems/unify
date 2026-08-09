@@ -69,21 +69,22 @@ Override with `AURA_BIN`, `AURA_ROOT`, `AETHER_ROOT`, etc.
 ## Quick start
 
 ```bash
-# 一键自进化（后台）：soak + **durable evolve + git commit**
-./scripts/start.sh
-./scripts/start.sh status
-./scripts/start.sh stop
-cat notes/evolve-state/state.json   # 持久化主体（generation / factor / body）
+# 自进化控制环（推荐入口名 evolve，不是 start）
+./scripts/evolve.sh              # 后台：soak + multi-cand durable + git commit
+./scripts/evolve.sh status
+./scripts/evolve.sh stop
+cat notes/evolve-state/state.json
 
-# 只跑一轮落盘进化并提交
+# 只跑一轮：query→多候选沙箱→选优→落盘提交
 ./scripts/durable-evolve.sh
 
-# Offline smoke (no API key)
+# Offline smoke
 ./scripts/run-offline.sh
 ```
 
-**Note:** `examples/02-live-evolve` is an **in-memory** smoke (process exits → gone).
-Real accumulation is `scripts/durable-evolve.sh` → `notes/evolve-state/` + `git commit`.
+Model: **local query→mutate**, multi-candidate under `ast:snapshot`, arbiter keeps
+one winner (see `notes/evolution-model.md`).  
+`examples/02-live-evolve` = in-memory denseness smoke only (no file / no git).
 
 ### Logs (continuous)
 

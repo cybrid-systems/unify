@@ -35,6 +35,9 @@
     (hash-set! h "compose_prometheus" 0)
     (hash-set! h "compose_hermes" 0)
     (hash-set! h "git_probes" 0)
+    (hash-set! h "cand_rounds" 0)
+    (hash-set! h "cand_tried" 0)
+    (hash-set! h "cand_wins" 0)
     h))
 
 (define *unify-stats* (unify:make-stats))
@@ -74,7 +77,10 @@
         (cons "compose_runs" (unify:stats-ref "compose_runs"))
         (cons "compose_ok" (unify:stats-ref "compose_ok"))
         (cons "compose_fail" (unify:stats-ref "compose_fail"))
-        (cons "git_probes" (unify:stats-ref "git_probes"))))
+        (cons "git_probes" (unify:stats-ref "git_probes"))
+        (cons "cand_rounds" (unify:stats-ref "cand_rounds"))
+        (cons "cand_tried" (unify:stats-ref "cand_tried"))
+        (cons "cand_wins" (unify:stats-ref "cand_wins"))))
 
 (define (unify:check-eq actual expected)
   (if (and (number? actual) (number? expected) (= actual expected))

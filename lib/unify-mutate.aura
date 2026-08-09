@@ -1,0 +1,106 @@
+; lib/unify-mutate.aura — local query→mutate + multi-candidate sandbox select
+;
+; Pattern (Aura denseness surface):
+;   (query :find "name")           locate locus
+;   (ast:snapshot) / (ast:restore) sandbox candidates
+;   (mutate:rebind name body …)    local mutation only
+;   arbiter picks best verify/fitness; only winner stays applied
+;
+; Form order: export before require (#2766).
+
+(export unify:mutate-version
+        unify:query-name
+        unify:sandbox-try!
+        unify:select-candidate!
+        unify:verify-factor
+        unify:apply-body!)
+
+(require "std/string" all:)
+(require "unify-measure" all:)
+(require "unify-loop" all:)
+
+(define unify:mutate-version 1)
+
+; (unify:query-name "score") → node list or empty
+(define (unify:query-name name)
+  (if (not (string? name))
+    (quote ())
+    (try (query :find name) (catch (e) (quote ())))))
+
+; Verify score closed samples for integer factor k.
+(define (unify:verify-factor k)
+  (try
+    (and (number? k)
+         (= (score 0) 0)
+         (= (score 7) (* 7 k))
+         (= (score 4) (* 4 k)))
+    (catch (e) #f)))
+
+; Apply body to name under safety; returns alist :ok :reason :snap
+(define (unify:apply-body! name body summary)
+  (unify:rebind-safe name body summary))
+
+; Try one candidate under snapshot; always restore. Returns fitness number or -1.
+; fitness: 1000 if verify-factor ok, else observed score(7) if number else -1
+(define (unify:sandbox-try! name body factor)
+  (let ((sid
+          (try
+            (let ((id (ast:snapshot "cand")))
+              (if (number? id) id -1))
+            (catch (e) -1))))
+    (let ((mut
+            (try (mutate:rebind name body "sandbox-cand")
+                 (catch (e) #f))))
+      (try (eval-current) (catch (e) #f))
+      (let ((fit
+              (if (not (eq? mut #t))
+                -1
+                (if (unify:verify-factor factor)
+                  1000
+                  (let ((v (try (score 7) (catch (e) -1))))
+                    (if (number? v) v -1))))))
+        (if (and (number? sid) (>= sid 0))
+          (begin
+            (try (ast:restore sid) (catch (e) #f))
+            (try (eval-current) (catch (e) #f)))
+          #f)
+        fit))))
+
+; candidates: list of body strings
+; Returns alist :ok :body :fitness :tried  or :ok #f
+; On success, winner is APPLIED (not left sandboxed).
+; Note: no set! on let-bound cells (host residual on some Aura builds);
+; fold best via recursive return values.
+(define (unify:select-candidate! name candidates factor)
+  (unify:stats-bump! "cand_rounds")
+  (if (not (pair? candidates))
+    (list (cons ":ok" #f) (cons ":reason" "no-cands"))
+    (let loop ((ys candidates) (best-body "") (best-fit -1) (n 0))
+      (if (null? ys)
+        (if (or (< best-fit 0) (equal? best-body ""))
+          (list (cons ":ok" #f)
+                (cons ":reason" "no-viable")
+                (cons ":tried" n)
+                (cons ":fitness" best-fit))
+          (let ((rb (unify:rebind-safe name best-body "select-winner")))
+            (if (and (unify:alist-ref ":ok" rb #f) (unify:verify-factor factor))
+              (begin
+                (unify:stats-bump! "cand_wins")
+                (list (cons ":ok" #t)
+                      (cons ":body" best-body)
+                      (cons ":fitness" best-fit)
+                      (cons ":tried" n)
+                      (cons ":locus" (unify:query-name name))))
+              (list (cons ":ok" #f)
+                    (cons ":reason" "apply-or-verify")
+                    (cons ":body" best-body)
+                    (cons ":fitness" best-fit)
+                    (cons ":tried" n)))))
+        (let ((b (car ys)))
+          (if (and (string? b) (> (string-length b) 0))
+            (let ((fit (unify:sandbox-try! name b factor)))
+              (unify:stats-bump! "cand_tried")
+              (if (> fit best-fit)
+                (loop (cdr ys) b fit (+ n 1))
+                (loop (cdr ys) best-body best-fit (+ n 1))))
+            (loop (cdr ys) best-body best-fit n)))))))

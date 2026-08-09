@@ -19,11 +19,15 @@
         unify:compose-span-versions
         unify:compose-aether! unify:compose-hephaestus!
         unify:compose-prometheus! unify:compose-hermes!
-        unify:compose-all! unify:compose-ok?)
+        unify:compose-all! unify:compose-ok?
+        unify:mutate-version
+        unify:query-name unify:sandbox-try!
+        unify:select-candidate! unify:verify-factor unify:apply-body!)
 
 (require "unify-measure" all:)
 (require "unify-loop" all:)
+(require "unify-mutate" all:)
 (require "unify-host" all:)
 (require "unify-compose" all:)
 
-(define unify:min-version 2)
+(define unify:min-version 3)
