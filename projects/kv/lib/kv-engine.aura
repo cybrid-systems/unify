@@ -68,7 +68,7 @@
 (define kv:pol-mode "alist")
 (define kv:pol-cache 0)
 (define kv:pol-thr 9999)
-(define (kv:_default-policy) (list kv:pol-mode kv:pol-cache kv:pol-thr))
+(define (kv:_default-policy) (list "alist" 0 9999))
 (define (kv:_zero-stats) (list 0 0 0 0 0))
 
 (define (kv:_pol-mode p) (list-ref p 0))

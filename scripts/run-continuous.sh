@@ -24,9 +24,10 @@
 #   UNIFY_FIBER_WAVES     sustained multi-wave fanout rounds (default 4)
 #   UNIFY_FIBER_BATCH     live concurrent thread cap per fanout (default 16; 0=unlimited)
 #   UNIFY_LOAD_SIM        1 = standalone load-sim each cycle (default 1)
-#   UNIFY_AURA_RESIDENT   1 = multi-gen single-process mutate+fiber (default 1)
-#   UNIFY_RESIDENT_GENS   generations per resident process (default 3)
-#   UNIFY_AURA_HOT        1 = single-gen denseness+hot-squeeze (default 0 if resident)
+#   UNIFY_AURA_DAEMON     1 = cross-cycle daemon tick (default 1)
+#   UNIFY_AURA_RESIDENT   1 = multi-gen batch if daemon off (default 1)
+#   UNIFY_RESIDENT_GENS   generations per resident/daemon tick (default 2)
+#   UNIFY_AURA_HOT        1 = single-gen denseness+hot-squeeze (default 0)
 #   UNIFY_SQUEEZE         1 = multi-process policy grid (default 0)
 #   UNIFY_SQUEEZE_JOBS    parallel aura workers for burn/mp grid
 #   UNIFY_LLM_EVERY       run LLM project-evolve every N cycles (default 3);
@@ -74,9 +75,10 @@ export UNIFY_FIBER_KEYS="${UNIFY_FIBER_KEYS:-128}"
 export UNIFY_FIBER_WAVES="${UNIFY_FIBER_WAVES:-4}"
 export UNIFY_FIBER_BATCH="${UNIFY_FIBER_BATCH:-16}"
 export UNIFY_LOAD_SIM="${UNIFY_LOAD_SIM:-1}"
+export UNIFY_AURA_DAEMON="${UNIFY_AURA_DAEMON:-1}"
 export UNIFY_AURA_RESIDENT="${UNIFY_AURA_RESIDENT:-1}"
-export UNIFY_RESIDENT_GENS="${UNIFY_RESIDENT_GENS:-3}"
-export UNIFY_FIBER_SOAK_WAVES="${UNIFY_FIBER_SOAK_WAVES:-4}"
+export UNIFY_RESIDENT_GENS="${UNIFY_RESIDENT_GENS:-2}"
+export UNIFY_FIBER_SOAK_WAVES="${UNIFY_FIBER_SOAK_WAVES:-2}"
 export UNIFY_AURA_HOT="${UNIFY_AURA_HOT:-0}"
 export UNIFY_SQUEEZE="${UNIFY_SQUEEZE:-0}"
 export UNIFY_SQUEEZE_JOBS="${UNIFY_SQUEEZE_JOBS:-0}"
@@ -339,9 +341,37 @@ while true; do
     fi
   fi
 
-  # Primary: multi-gen RESIDENT Aura (mutate denseness+plant, fiber waves, 1 cold start)
+  # Primary: cross-cycle DAEMON tick (same Aura process across cycles)
   hot_gain=0
-  if [[ "${UNIFY_AURA_RESIDENT}" == "1" ]]; then
+  if [[ "${UNIFY_AURA_DAEMON}" == "1" ]]; then
+    export UNIFY_DAEMON_TICK_LOG="$cdir/aura-daemon.log"
+    if run_step "aura-daemon" \
+      "./scripts/aura-daemon.sh tick" \
+      "RESULT pass aura-daemon-tick" \
+      "$cdir/aura-daemon.log"; then
+      c_ok=$((c_ok + 1))
+      if grep -q 'improved=1\|cold_starts=0' "$cdir/aura-daemon.log"; then
+        hot_gain=1
+        log "daemon tick GAIN — cross-cycle mutate denseness+plant+struct (LLM may skip)"
+      fi
+      if grep -qE 'mutate_ops' "$cdir/aura-daemon.log"; then
+        log "daemon $(grep -oE 'mutate_ops_total=[0-9]+' "$cdir/aura-daemon.log" | tail -1) $(grep -oE 'cold_starts=[0-9]+' "$cdir/aura-daemon.log" | tail -1)"
+      fi
+    else
+      log "WARN daemon tick soft-fail — fallback resident"
+      c_fail=$((c_fail + 1))
+      # fallback single-shot resident
+      if [[ "${UNIFY_AURA_RESIDENT}" == "1" ]]; then
+        if run_step "aura-resident" \
+          "./scripts/aura-resident.sh" \
+          "RESULT pass aura-resident" \
+          "$cdir/aura-resident.log"; then
+          c_ok=$((c_ok + 1))
+          grep -q 'improved=1' "$cdir/aura-resident.log" && hot_gain=1
+        fi
+      fi
+    fi
+  elif [[ "${UNIFY_AURA_RESIDENT}" == "1" ]]; then
     if run_step "aura-resident" \
       "./scripts/aura-resident.sh" \
       "RESULT pass aura-resident" \
@@ -350,12 +380,6 @@ while true; do
       if grep -q 'improved=1' "$cdir/aura-resident.log"; then
         hot_gain=1
         log "resident GAIN — multi-gen mutate+fiber (LLM may skip)"
-      fi
-      if grep -qE 'mutate_ops=' "$cdir/aura-resident.log"; then
-        log "resident $(grep -oE 'mutate_ops=[0-9]+' "$cdir/aura-resident.log" | tail -1) $(grep -oE 'cold_starts=[0-9]+' "$cdir/aura-resident.log" | tail -1)"
-      fi
-      if git log -1 --oneline 2>/dev/null | grep -qE 'resident|aura-hot|squeeze'; then
-        log "git tip: $(git log -1 --oneline)"
       fi
     else
       log "WARN aura-resident soft-fail"

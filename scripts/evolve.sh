@@ -44,9 +44,10 @@ export_env() {
   export UNIFY_FIBER_WAVES="${UNIFY_FIBER_WAVES:-4}"
   export UNIFY_FIBER_BATCH="${UNIFY_FIBER_BATCH:-16}"
   export UNIFY_DURABLE_EVOLVE="${UNIFY_DURABLE_EVOLVE:-1}"
+  export UNIFY_AURA_DAEMON="${UNIFY_AURA_DAEMON:-1}"
   export UNIFY_AURA_RESIDENT="${UNIFY_AURA_RESIDENT:-1}"
-  export UNIFY_RESIDENT_GENS="${UNIFY_RESIDENT_GENS:-3}"
-  export UNIFY_FIBER_SOAK_WAVES="${UNIFY_FIBER_SOAK_WAVES:-4}"
+  export UNIFY_RESIDENT_GENS="${UNIFY_RESIDENT_GENS:-2}"
+  export UNIFY_FIBER_SOAK_WAVES="${UNIFY_FIBER_SOAK_WAVES:-2}"
   export UNIFY_AURA_HOT="${UNIFY_AURA_HOT:-0}"
   export UNIFY_SQUEEZE="${UNIFY_SQUEEZE:-0}"
   export UNIFY_LLM_EVERY="${UNIFY_LLM_EVERY:-4}"
@@ -87,6 +88,10 @@ start_loop() {
   export_env
   touch "$WANT"
   rm -f "$LOG_ROOT/STOP"
+  # cross-cycle Aura daemon (mutate denseness+plant+struct, cold_starts=0)
+  if [[ "${UNIFY_AURA_DAEMON:-1}" == "1" ]]; then
+    ./scripts/aura-daemon.sh start 2>/dev/null || echo "warn: aura-daemon start failed"
+  fi
   if loop_alive; then
     echo "loop already running pid=$(cat "$LOG_ROOT/latest/pid")"
   else
@@ -101,9 +106,10 @@ start_loop() {
   fi
   start_watchdog
   echo "  project: $UNIFY_PROJECT (state in workspace; survives restart)"
-  echo "  plant:   adaptive in-mem KV — load-sim → retune index/cache (infinite)"
+  echo "  plant:   daemon tick → denseness+plant struct mutate + fiber (infinite)"
   echo "  fiber:   N=${UNIFY_FIBER_N} keys=${UNIFY_FIBER_KEYS} waves=${UNIFY_FIBER_WAVES:-4} batch=${UNIFY_FIBER_BATCH:-16} stress=${UNIFY_FIBER_STRESS}"
-  echo "  LLM: 1 call/gen timeout=${UNIFY_LLM_TIMEOUT}s x${UNIFY_LLM_RETRIES}"
+  echo "  daemon:  UNIFY_AURA_DAEMON=${UNIFY_AURA_DAEMON:-1} gens/tick=${UNIFY_RESIDENT_GENS:-2}"
+  echo "  LLM: every ${UNIFY_LLM_EVERY:-4} cycles (skip on daemon gain) timeout=${UNIFY_LLM_TIMEOUT}s"
   echo "  status:  $0 status"
   echo "  stop:    $0 stop"
   ./scripts/status.sh 2>/dev/null | head -n 22 || true
@@ -113,6 +119,7 @@ case "$cmd" in
   stop)
     rm -f "$WANT"
     touch "$LOG_ROOT/STOP"
+    ./scripts/aura-daemon.sh stop 2>/dev/null || true
     if loop_alive; then
       echo "stopping loop pid=$(cat "$LOG_ROOT/latest/pid") (after current cycle)"
     else

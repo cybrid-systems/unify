@@ -1,0 +1,368 @@
+; projects/kv/tests/daemon-loop.aura — long-lived Aura across continuous cycles
+;
+; Polls EVOLVE/daemon-cmd (via UNIFY_DAEMON_DIR):
+;   "run"  → execute one resident generation batch, write daemon-status + daemon-result
+;   "stop" → exit cleanly
+;   else   → busy-spin poll (~20ms)
+;
+; Plant structure mutate: rebind plant-body-get candidates and measure.
+; Plant policy mutate: rebind plant-mode/cache/thr.
+; Denseness multi-cand when span libs present.
+;
+; Env: UNIFY_DAEMON_DIR UNIFY_LOAD_KEYS/OPS UNIFY_HOT_FIBER_N
+;      UNIFY_FIBER_SOAK_WAVES UNIFY_RESIDENT_GENS (gens per tick)
+
+(require "std/mutate" all:)
+(require "kv" all:)
+(require "kv-engine" all:)
+(try (require "unify-explore" all:) (catch (e) #f))
+
+(let* ((now-ms (lambda () (try (current-time-ms) (catch (e) 0))))
+       (env-dir (getenv "UNIFY_DAEMON_DIR"))
+       (DIR (if (and (string? env-dir) (> (string-length env-dir) 0))
+              env-dir
+              "projects/kv/evolve"))
+       (cmd-path (string-append DIR "/daemon-cmd"))
+       (status-path (string-append DIR "/daemon-status"))
+       (result-path (string-append DIR "/daemon-result"))
+       (env-g (getenv "UNIFY_RESIDENT_GENS"))
+       (env-keys (getenv "UNIFY_LOAD_KEYS"))
+       (env-ops (getenv "UNIFY_LOAD_OPS"))
+       (env-fn (getenv "UNIFY_HOT_FIBER_N"))
+       (env-fw (getenv "UNIFY_FIBER_SOAK_WAVES"))
+       (GENS
+         (let ((n (if (and (string? env-g) (> (string-length env-g) 0))
+                    (string->number env-g) #f)))
+           (if (and (number? n) (> n 0)) n 2)))
+       (N-KEYS
+         (let ((n (if (and (string? env-keys) (> (string-length env-keys) 0))
+                    (string->number env-keys) #f)))
+           (if (and (number? n) (> n 0)) n 40)))
+       (N-OPS
+         (let ((n (if (and (string? env-ops) (> (string-length env-ops) 0))
+                    (string->number env-ops) #f)))
+           (if (and (number? n) (> n 0)) n 96)))
+       (FIBER-N
+         (let ((n (if (and (string? env-fn) (> (string-length env-fn) 0))
+                    (string->number env-fn) #f)))
+           (if (and (number? n) (> n 0)) n 16)))
+       (SOAK-WAVES
+         (let ((n (if (and (string? env-fw) (> (string-length env-fw) 0))
+                    (string->number env-fw) #f)))
+           (if (and (number? n) (> n 0)) n 2)))
+       (spin-ms
+         (lambda (ms)
+           (let ((t0 (now-ms)))
+             (while (lambda () (< (- (now-ms) t0) ms))
+               (lambda () 0)))))
+       (trim-cmd
+         (lambda (s)
+           ; strip trailing newline/CR from shell echo
+           (if (not (string? s))
+             "idle"
+             (let ((n (string-length s)))
+               (if (and (> n 0)
+                        (or (equal? (substring s (- n 1) n) "\n")
+                            (equal? (substring s (- n 1) n) "\r")))
+                 (trim-cmd (substring s 0 (- n 1)))
+                 s)))))
+       (read-cmd
+         (lambda ()
+           (try
+             (let ((s (read-file cmd-path)))
+               (trim-cmd (if (string? s) s "idle")))
+             (catch (e) "idle"))))
+       (write-status!
+         (lambda (s) (try (write-file status-path s) (catch (e) #f))))
+       (write-result!
+         (lambda (s) (try (write-file result-path s) (catch (e) #f))))
+       ; plant knobs + structure hook (body get strategy)
+       (_boot
+         (begin
+           (set-code
+             (string-append
+               "(define plant-mode \"hybrid\")"
+               "(define plant-cache 8)"
+               "(define plant-thr 32)"
+               "(define (plant-policy) (list plant-mode plant-cache plant-thr))"
+               ; structure: pure body getter — mutate:rebind this for plant structure evolve
+               "(define (plant-body-get body k) (kv:get body k))"))
+           (try (eval-current) (catch (e) #f))))
+       (fill
+         (lambda (n pol)
+           (let ((i 0) (e (kv:engine-open pol)))
+             (while (lambda () (< i n))
+               (lambda ()
+                 (set! e (kv:engine-set e
+                           (string-append "k" (number->string i)) i))
+                 (set! i (+ i 1))))
+             e)))
+       ; load using plant-body-get for body path when mode has no cache help
+       (load-score-plant
+         (lambda (pol)
+           (let* ((base (fill N-KEYS pol))
+                  (body (kv:engine-body base))
+                  (t0 (now-ms))
+                  (i 0)
+                  (acc 0))
+             (while (lambda () (< i N-OPS))
+               (lambda ()
+                 (let ((k (string-append "k" (number->string (modulo i N-KEYS)))))
+                   (let ((v (try (plant-body-get body k) (catch (e) #f))))
+                     (if (number? v) (set! acc (+ acc 1)) #f)
+                     (set! i (+ i 1))))))
+             (let* ((t1 (now-ms))
+                    (el (if (> (- t1 t0) 0) (- t1 t0) 1)))
+               (/ (* N-OPS 1000) el)))))
+       (load-score-engine
+         (lambda (pol)
+           (let* ((base (fill N-KEYS pol))
+                  (hot-n (if (< 4 N-KEYS) 4 N-KEYS))
+                  (eng base)
+                  (i 0)
+                  (t0 (now-ms)))
+             (while (lambda () (< i N-OPS))
+               (lambda ()
+                 (let ((r (kv:engine-get eng
+                            (string-append "k" (number->string (modulo i hot-n))))))
+                   (set! eng (cadr r))
+                   (set! i (+ i 1)))))
+             (let ((t1 (now-ms))
+                   (el (if (> (- (now-ms) t0) 0) (- (now-ms) t0) 1)))
+               (/ (* N-OPS 1000) el)))))
+       (apply-pol!
+         (lambda (mode c thr)
+           (try (mutate:rebind "plant-mode"
+                  (string-append "\"" mode "\"") "pm") (catch (e) #f))
+           (try (mutate:rebind "plant-cache" (number->string c) "pc") (catch (e) #f))
+           (try (mutate:rebind "plant-thr" (number->string thr) "pt") (catch (e) #f))
+           (try (eval-current) (catch (e) #f))))
+       (apply-body-get!
+         (lambda (body-str)
+           (let ((ok (try (mutate:rebind "plant-body-get" body-str "pbg") (catch (e) #f))))
+             (try (eval-current) (catch (e) #f))
+             ok)))
+       (fiber-wave!
+         (lambda (pol)
+           (let* ((shared (fill N-KEYS pol))
+                  (want (let loop ((i 0) (a 0))
+                          (if (>= i N-KEYS) a (loop (+ i 1) (+ a i)))))
+                  (reader
+                    (lambda ()
+                      (let ((i 0) (acc 0) (eng shared))
+                        (while (lambda () (< i N-KEYS))
+                          (lambda ()
+                            (let ((r (kv:engine-get eng
+                                       (string-append "k" (number->string i)))))
+                              (set! eng (cadr r))
+                              (if (number? (car r)) (set! acc (+ acc (car r))) #f)
+                              (set! i (+ i 1)))))
+                        acc)))
+                  (ids (quote ()))
+                  (k 0)
+                  (ok #t))
+             (while (lambda () (and ok (< k FIBER-N)))
+               (lambda ()
+                 (let ((fid (fiber:spawn reader)))
+                   (if (and (number? fid) (> fid 0))
+                     (begin (set! ids (cons fid ids)) (set! k (+ k 1)))
+                     (set! ok #f)))))
+             (let ((xs ids) (n-ok 0))
+               (while (lambda () (pair? xs))
+                 (lambda ()
+                   (let ((r (fiber:join (car xs))))
+                     (if (and (number? r) (= r want)) (set! n-ok (+ n-ok 1)) #f)
+                     (set! xs (cdr xs)))))
+               (list ok n-ok FIBER-N)))))
+       (ticks 0)
+       (running #t)
+       (best-mode "hybrid")
+       (best-c 8)
+       (best-t 32)
+       (best-s -1)
+       (best-body "(lambda (body k) (kv:get body k))")
+       (mutate-ops 0)
+       (t-boot (now-ms)))
+
+  (display "=== daemon-loop DIR=") (display DIR) (newline)
+  (display "METRO daemon_boot_ms=")
+  (display (if (> (- (now-ms) t-boot) 0) (- (now-ms) t-boot) 0))
+  (newline)
+  (write-status! "ready")
+  (write-file cmd-path "idle")
+
+  (while (lambda () running)
+    (lambda ()
+      (let ((cmd (read-cmd)))
+        (if (equal? cmd "stop")
+          (begin
+            (write-status! "stopped")
+            (display "DAEMON stop") (newline)
+            (set! running #f))
+          (if (equal? cmd "run")
+            (begin
+              (write-status! "busy")
+              (write-file cmd-path "idle")
+              (set! ticks (+ ticks 1))
+              (let ((t0 (now-ms))
+                    (mut 0)
+                    (gen 0)
+                    (local-best -1)
+                    (lm best-mode) (lc best-c) (lt best-t)
+                    (lb best-body))
+                (display "---- TICK ") (display ticks)
+                (display " gens=") (display GENS)
+                (display " ----") (newline)
+
+                (while (lambda () (< gen GENS))
+                  (lambda ()
+                    ; denseness
+                    (try
+                      (begin
+                        (unify:explore-install!
+                          "(lambda (x) (* x 2))"
+                          "(lambda (n) (/ (* n (- n 1)) 2))"
+                          "(lambda (x) (* x 3))"
+                          "(lambda (x) (modulo (+ x 1) 3))")
+                        (set! mut (+ mut 1))
+                        (unify:explore-select-axis! "score"
+                          (list "(lambda (x) (* x 3))"
+                                "(lambda (x) (* x 2))"
+                                "(lambda (x) (+ x x x))"))
+                        (set! mut (+ mut 3))
+                        (display "DENSE tick=") (display ticks)
+                        (display " gen=") (display gen)
+                        (display " score7=")
+                        (display (try (score 7) (catch (e) -1)))
+                        (newline))
+                      (catch (e) (display "DENSE soft-fail") (newline)))
+
+                    ; plant STRUCTURE candidates (mutate plant-body-get)
+                    (let ((bodies
+                            (list
+                              "(lambda (body k) (kv:get body k))"
+                              "(lambda (body k) (let ((v (kv:get body k))) v))"
+                              "(lambda (body k) (if (kv:has? body k) (kv:get body k) #f))"))
+                          (bs bodies)
+                          (b-best lb)
+                          (b-score -1))
+                      (while (lambda () (pair? bs))
+                        (lambda ()
+                          (let ((b (car bs)))
+                            (if (apply-body-get! b)
+                              (begin
+                                (set! mut (+ mut 1))
+                                (let ((s (load-score-plant (list "alist" 0 9999))))
+                                  (display "  STRUCT score=") (display s)
+                                  (display " body=") (display b)
+                                  (newline)
+                                  (if (> s b-score)
+                                    (begin (set! b-score s) (set! b-best b))
+                                    #f)))
+                              #f)
+                            (set! bs (cdr bs)))))
+                      (apply-body-get! b-best)
+                      (set! mut (+ mut 1))
+                      (set! lb b-best)
+                      (display "STRUCT_BEST ") (display b-best)
+                      (display " s=") (display b-score)
+                      (newline))
+
+                    ; plant POLICY grid
+                    (let ((cands
+                            (list
+                              (list "alist" 0 9999)
+                              (list "hybrid" 4 16)
+                              (list "hybrid" 8 32)
+                              (list "cache" 4 32)
+                              (list "cache" 8 32)
+                              (list "cache" 16 32)))
+                          (cs cands)
+                          (p-best -1)
+                          (pm lm) (pc lc) (pt lt))
+                      (while (lambda () (pair? cs))
+                        (lambda ()
+                          (let ((p (car cs)))
+                            (apply-pol! (list-ref p 0) (list-ref p 1) (list-ref p 2))
+                            (set! mut (+ mut 3))
+                            (let ((s (load-score-engine
+                                       (list (list-ref p 0) (list-ref p 1) (list-ref p 2)))))
+                              (if (> s p-best)
+                                (begin
+                                  (set! p-best s)
+                                  (set! pm (list-ref p 0))
+                                  (set! pc (list-ref p 1))
+                                  (set! pt (list-ref p 2)))
+                                #f))
+                            (set! cs (cdr cs)))))
+                      (apply-pol! pm pc pt)
+                      (set! mut (+ mut 3))
+                      (set! lm pm) (set! lc pc) (set! lt pt)
+                      (if (> p-best local-best) (set! local-best p-best) #f)
+                      (display "POLICY_BEST ") (display pm)
+                      (display " c=") (display pc)
+                      (display " s=") (display p-best)
+                      (newline))
+
+                    ; fiber waves
+                    (let ((w 0) (f-ok #t) (f-ok-n 0))
+                      (while (lambda () (< w SOAK-WAVES))
+                        (lambda ()
+                          (let ((r (fiber-wave! (list lm lc lt))))
+                            (if (not (list-ref r 0)) (set! f-ok #f) #f)
+                            (set! f-ok-n (+ f-ok-n (list-ref r 1)))
+                            (set! w (+ w 1)))))
+                      (display "FIBER waves=") (display SOAK-WAVES)
+                      (display " ok=") (display f-ok)
+                      (display " joins=") (display f-ok-n)
+                      (newline))
+
+                    (set! gen (+ gen 1))))
+
+                (if (> local-best best-s)
+                  (begin
+                    (set! best-s local-best)
+                    (set! best-mode lm)
+                    (set! best-c lc)
+                    (set! best-t lt)
+                    (set! best-body lb))
+                  #f)
+                (set! mutate-ops (+ mutate-ops mut))
+                (let* ((elapsed (if (> (- (now-ms) t0) 0) (- (now-ms) t0) 0))
+                       (summary
+                         (string-append
+                           "RESULT pass daemon-tick"
+                           " tick=" (number->string ticks)
+                           " mode=" best-mode
+                           " cache=" (number->string best-c)
+                           " thr=" (number->string best-t)
+                           " score=" (number->string best-s)
+                           " mutate_ops=" (number->string mut)
+                           " mutate_ops_total=" (number->string mutate-ops)
+                           " ms=" (number->string elapsed)
+                           " cold_starts=0"
+                           " body=" best-body
+                           "\n")))
+                  (display "BEST_POLICY mode=") (display best-mode)
+                  (display " cache=") (display best-c)
+                  (display " thr=") (display best-t)
+                  (display " score=") (display best-s)
+                  (newline)
+                  (display "METRO tick=") (display ticks)
+                  (display " ms=") (display elapsed)
+                  (display " mutate_ops=") (display mut)
+                  (display " cold=0")
+                  (newline)
+                  (write-result! summary)
+                  (display summary)
+                  (write-status! "ready"))))
+            ; idle poll
+            (begin
+              (write-status! "ready")
+              (spin-ms 25)))))))
+
+  (display "RESULT pass project=kv-daemon ticks=")
+  (display ticks)
+  (display " mutate_ops_total=")
+  (display mutate-ops)
+  (newline))

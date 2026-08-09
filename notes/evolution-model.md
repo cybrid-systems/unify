@@ -45,20 +45,29 @@ Also each `run-continuous` cycle:
 | **squeeze** | **parallel local policy grid + multi-worker CPU burn (no LLM)** |
 | project-evolve | LLM every `UNIFY_LLM_EVERY` cycles; **skipped** if squeeze just gained |
 
-### Resident multi-gen (primary — full Aura leverage)
+### Cross-cycle daemon (primary — full Aura leverage)
 
 ```bash
-UNIFY_RESIDENT_GENS=3 ./scripts/aura-resident.sh
+./scripts/aura-daemon.sh start
+./scripts/aura-daemon.sh tick    # continuous calls this each cycle
+./scripts/aura-daemon.sh stop
 ```
 
 | Phase | Aura surface |
 |-------|----------------|
-| **one cold start** | entire GENS loop in single process |
-| denseness | `mutate:rebind` multi-cand per gen |
-| plant | free knobs via `set-code` + **`mutate:rebind` plant-mode/cache/thr** + load measure |
-| fiber | multi-wave flat soak (`UNIFY_FIBER_SOAK_WAVES`) |
-| metrology | `METRO cold_start_ms / gen_ms / mutate_ops / cold=0` |
-| persist | best policy written to `kv-engine` after verify |
+| **cross-cycle process** | one Aura PID for many continuous cycles (`cold_starts=0`) |
+| denseness | `mutate:rebind` multi-cand per tick gen |
+| plant **policy** | `set-code` knobs + `mutate:rebind` plant-mode/cache/thr |
+| plant **structure** | `mutate:rebind` **`plant-body-get`** body candidates + measure |
+| fiber | multi-wave flat soak |
+| metrology | `METRO tick/ms/mutate_ops/cold=0` |
+| IPC | `daemon-cmd` / `daemon-status` / `daemon-result` files |
+
+### Resident multi-gen (fallback batch)
+
+```bash
+UNIFY_RESIDENT_GENS=3 ./scripts/aura-resident.sh
+```
 
 ### Aura-hot (optional single-gen)
 
