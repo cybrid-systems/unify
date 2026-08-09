@@ -1,12 +1,12 @@
 {
   "mode": "spacetime-explore",
-  "generation": 8,
-  "axis_cursor": 0,
+  "generation": 9,
+  "axis_cursor": 1,
   "subjects": {
     "score": {
       "span": "aether",
       "role": "decision",
-      "body": "(lambda (x) (* x (+ (* x x) 1)))"
+      "body": "(lambda (x) (* x (+ x 2)))"
     },
     "kernel": {
       "span": "hephaestus",
@@ -120,10 +120,22 @@
       "candidates_n": 5,
       "fitness": 1000,
       "mode": "spacetime-explore"
+    },
+    {
+      "ts": "2026-08-09T04:43Z",
+      "generation": 9,
+      "axis": "score",
+      "span": "aether",
+      "from_body": "(lambda (x) (* x (+ (* x x) 1)))",
+      "to_body": "(lambda (x) (* x (+ x 2)))",
+      "tried": 9,
+      "candidates_n": 9,
+      "fitness": 1000,
+      "mode": "spacetime-explore"
     }
   ],
   "status": "ok",
-  "updated": "2026-08-09T04:41Z",
-  "last_axis": "hop",
-  "last_span": "hermes"
+  "updated": "2026-08-09T04:43Z",
+  "last_axis": "score",
+  "last_span": "aether"
 }
