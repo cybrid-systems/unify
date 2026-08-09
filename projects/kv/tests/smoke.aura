@@ -636,6 +636,100 @@
           (= (kv:sum m) 24)
           (= (kv:product m) 640))))
 
+; ---- Phase 11: set-theoretic / relational helpers ----
+
+; T54: intersection() keeps common keys with b's value; a's order preserved.
+(let* ((a (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
+       (b (kv:set (kv:set (kv:set (kv:open) "a" 10) "b" 2) "d" 4))
+       (i (kv:intersection a b))
+       (ik (kv:keys i)))
+  (t "T54-intersection"
+     (and (= (kv:size i) 2)
+          (equal? (kv:get i "a") 10)
+          (equal? (kv:get i "b") 2)
+          (eq? (kv:get i "c") #f)
+          (eq? (kv:get i "d") #f)
+          (equal? (car ik) "a")
+          (equal? (car (cdr ik)) "b"))))
+
+; T54b: intersection() of disjoint stores is empty (no shared keys).
+(t "T54b-intersection-disjoint"
+   (= (kv:size
+        (kv:intersection (kv:set (kv:set (kv:open) "a" 1) "b" 2)
+                          (kv:set (kv:set (kv:open) "c" 3) "d" 4)))
+      0))
+
+; T54c: intersection() with an empty operand is empty on both sides.
+(t "T54c-intersection-empty"
+   (and (= (kv:size
+             (kv:intersection (kv:open)
+                               (kv:set (kv:open) "a" 1)))
+          0)
+        (= (kv:size
+             (kv:intersection (kv:set (kv:open) "a" 1)
+                               (kv:open)))
+          0)))
+
+; T55: subtract() drops keys present in b; a's other keys survive in a's order.
+(let* ((a (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
+       (b (kv:set (kv:set (kv:open) "b" 99) "c" 88))
+       (s (kv:subtract a b))
+       (sk (kv:keys s)))
+  (t "T55-subtract"
+     (and (= (kv:size s) 1)
+          (equal? (kv:get s "a") 1)
+          (eq? (kv:get s "b") #f)
+          (eq? (kv:get s "c") #f)
+          (equal? (car sk) "a"))))
+
+; T55b: subtract() with a disjoint b is the identity on a.
+(t "T55b-subtract-identity"
+   (let* ((a (kv:set (kv:set (kv:open) "a" 1) "b" 2))
+          (b (kv:set (kv:set (kv:open) "c" 3) "d" 4))
+          (s (kv:subtract a b)))
+     (and (= (kv:size s) 2)
+          (equal? (kv:get s "a") 1)
+          (equal? (kv:get s "b") 2)
+          (equal? (car (kv:keys s)) "a")
+          (equal? (car (cdr (kv:keys s))) "b"))))
+
+; T55c: subtract() with b == a yields an empty store (full removal).
+(t "T55c-subtract-self"
+   (= (kv:size
+        (kv:subtract (kv:set (kv:set (kv:open) "a" 1) "b" 2)
+                     (kv:set (kv:set (kv:open) "a" 1) "b" 2)))
+      0))
+
+; T56: disjoint? returns #t iff no key appears in both stores.
+(let* ((a (kv:set (kv:set (kv:open) "a" 1) "b" 2))
+       (b (kv:set (kv:set (kv:open) "c" 3) "d" 4))
+       (c (kv:set (kv:set (kv:open) "a" 99) "e" 5)))
+  (t "T56-disjoint?"
+     (and (kv:disjoint? a b)
+          (not (kv:disjoint? a c))
+          (kv:disjoint? (kv:open) a)
+          (not (kv:disjoint? a a)))))
+
+; T57: subset? is value-aware; every a-entry must have an equal b-entry.
+(let* ((a (kv:set (kv:set (kv:open) "x" 1) "y" 2))
+       (b (kv:set (kv:set (kv:set (kv:open) "x" 1) "y" 2) "z" 3))
+       (c (kv:set (kv:set (kv:open) "x" 1) "y" 99)))
+  (t "T57-subset?"
+     (and (kv:subset? a b)
+          (not (kv:subset? b a))
+          (kv:subset? a a)
+          (not (kv:subset? a c)))))
+
+; T57b: subset? on an empty a is vacuously #t (the empty set is a subset).
+(t "T57b-subset-empty"
+   (kv:subset? (kv:open) (kv:set (kv:open) "anything" 1)))
+
+; T57c: subset? rejects an a that has a key absent from b.
+(t "T57c-subset-missing"
+   (let* ((a (kv:set (kv:set (kv:open) "x" 1) "y" 2))
+          (b (kv:set (kv:open) "x" 1)))
+     (not (kv:subset? a b))))
+
 (display "SCORE ")
 (display pass)
 (display "/")

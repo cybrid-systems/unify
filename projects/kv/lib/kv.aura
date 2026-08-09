@@ -15,6 +15,8 @@
 ;             (nth, count, sum, zip, swap).
 ; Phase 10:  statistical / numeric aggregation helpers
 ;             (min, max, product, avg).
+; Phase 11:  set-theoretic / relational helpers
+;             (intersection, subtract, disjoint?, subset?).
 ;
 ; Store representation: alist of (key . val) pairs.
 ;   * Keys are strings.
@@ -72,9 +74,13 @@
         kv:min
         kv:max
         kv:product
-        kv:avg)
+        kv:avg
+        kv:intersection
+        kv:subtract
+        kv:disjoint?
+        kv:subset?)
 
-(define kv:version 10)
+(define kv:version 11)
 
 ; ---------------------------------------------------------------------------
 ; Internal alist primitives.
@@ -742,3 +748,102 @@
     (if (= n 0)
       #f
       (/ (kv:sum store) n))))
+
+; ---------------------------------------------------------------------------
+; Phase 11 set-theoretic / relational helpers.
+; Pure functional; insertion order of the LEFT (or sole) operand is
+; preserved by construction; no FS escapes. All derive from the
+; existing alist primitives (`_fold`, `_has`, `_ref`, `_set`) — no new
+; internal helper is needed.
+;
+; Conventions:
+;   * `kv:intersection` returns entries whose key is present in both
+;     operands, with the RIGHT operand's value (mirroring kv:merge's
+;     right-wins bias and kv:diff's "b-side wins" convention). Keys
+;     present only in `b` are not echoed back; this is the standard
+;     set-theoretic definition of intersection applied to a
+;     value-bearing collection.
+;   * `kv:subtract` is the LEFT-minus-RIGHT set difference: keys
+;     present in `a` are dropped when they also appear in `b`. The
+;     survivor order follows `a`. Only `b`'s *key set* matters — its
+;     values are not consulted (consistent with set-difference
+;     semantics in the algebra of keyed collections).
+;   * `kv:disjoint?` is a short-circuit existential: walks `a` and
+;     returns `#f` the moment a shared key is found, `#t` otherwise.
+;     Vacuous `#t` on an empty `a`. Non-pair cells in `a` are skipped
+;     defensively, same posture as every other op in the store.
+;   * `kv:subset?` is a value-aware subset: every entry in `a` must
+;     have a structurally-equal entry in `b`. Empty `a` is vacuous
+;     `#t` (the empty collection is a subset of every collection).
+;     Size is *not* checked — `a` may be smaller, equal, or strict
+;     relative to `b`; pair with `kv:equal?` for the size-checked,
+;     both-directions version.
+; ---------------------------------------------------------------------------
+
+; (kv:intersection a b) -> store.
+; Keys present in both `a` and `b`, with `b`'s value (right-wins,
+; consistent with kv:merge and kv:diff). Insertion order follows `a`
+; (the left operand). Non-pair cells in `a` are skipped defensively.
+; A value of `#f` from `b` is a perfectly valid intersection result —
+; the only signal that an entry survived is that `b` had the key, not
+; that `b`'s value is "truthy".
+(define (kv:intersection a b)
+  (kv:_fold a (quote ())
+    (lambda (k va acc)
+      (if (kv:_has b k)
+        (kv:_set acc k (kv:_ref b k))
+        acc))))
+
+; (kv:subtract a b) -> store.
+; Set-difference: `a` minus the key set of `b`. Keys present in `a`
+; are dropped when they also appear in `b`; the values that survive
+; are `a`'s (the left operand). Insertion order follows `a`. The
+; right operand's values are not consulted — only its key set matters,
+; which is what "set difference" means for a keyed collection.
+; Implemented with a single fold; no intermediate alist materialised.
+(define (kv:subtract a b)
+  (kv:_fold a (quote ())
+    (lambda (k v acc)
+      (if (kv:_has b k)
+        acc
+        (kv:_set acc k v)))))
+
+; (kv:disjoint? a b) -> #t | #f.
+; True iff no key appears in both `a` and `b`. Short-circuits on the
+; first shared key, so it runs in O(min(|a|, shared-prefix)) in the
+; best case and O(|a|) in the worst case. The empty store is
+; vacuously disjoint from anything (no key to share). Non-pair cells
+; in `a` are skipped defensively.
+(define (kv:disjoint? a b)
+  (if (null? a)
+    #t
+    (let ((p (car a)))
+      (if (pair? p)
+        (if (kv:_has b (car p))
+          #f
+          (kv:disjoint? (cdr a) b))
+        (kv:disjoint? (cdr a) b)))))
+
+; (kv:subset? a b) -> #t | #f.
+; Value-aware subset: every entry in `a` must have a structurally-
+; equal entry in `b` (same key, structurally equal value). Vacuous
+; `#t` on an empty `a` — the empty collection is a subset of every
+; collection. `a` may be smaller, equal, or any size relative to `b`;
+; this is the "structural subset" relation, not the "equal-size"
+; relation; pair with `kv:equal?` when you also need to reject strict
+; subsets. A stored `#f` value in `a` matches a stored `#f` value in
+; `b` (equal? agrees on `#f`), so `#f`-valued entries are not
+; silently dropped.
+(define (kv:subset? a b)
+  (let loop ((xs a))
+    (if (null? xs)
+      #t
+      (let ((p (car xs)))
+        (if (pair? p)
+          (let ((k (car p)))
+            (if (kv:_has b k)
+              (if (equal? (kv:_ref b k) (cdr p))
+                (loop (cdr xs))
+                #f)
+              #f))
+          (loop (cdr xs)))))))
