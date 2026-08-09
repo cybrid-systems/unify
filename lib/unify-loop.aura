@@ -1,0 +1,190 @@
+; lib/unify-loop.aura — synthesis closed loop (MiniMax-M3 propose edge)
+; Subject: score (lambda) — Aether-style; verified closed-form samples.
+; Form order: export before require.
+
+(export unify:loop-version
+        unify:install-subject
+        unify:safety-ok?
+        unify:snapshot
+        unify:restore
+        unify:rebind-safe
+        unify:observe-score
+        unify:verify-score
+        unify:propose-body!
+        unify:loop-once!)
+
+(require "std/string" all:)
+(require "std/mutate" all:)
+(require "std/llm" all:)
+(require "unify-measure" all:)
+
+(define unify:loop-version 1)
+
+(define (unify:install-subject source)
+  (set-code source)
+  (try (begin (eval-current) #t) (catch (e) #f)))
+
+(define (unify:safety-ok?)
+  (try
+    (and (mutate:boundary-safe?) (mutate:quota-ok?))
+    (catch (e) #f)))
+
+(define (unify:snapshot tag)
+  (try
+    (let ((id (ast:snapshot tag)))
+      (if (number? id) id -1))
+    (catch (e) -1)))
+
+(define (unify:restore snap-id)
+  (if (and (number? snap-id) (>= snap-id 0))
+    (try
+      (begin
+        (ast:restore snap-id)
+        (try (eval-current) (catch (e) #f))
+        #t)
+      (catch (e) #f))
+    #f))
+
+(define (unify:rebind-safe name body summary)
+  (if (not (try (and (mutate:boundary-safe?) (mutate:quota-ok?)) (catch (e) #f)))
+    (list (cons ":ok" #f) (cons ":reason" "boundary-or-quota") (cons ":snap" -1))
+    (let ((snap
+            (try
+              (let ((id (ast:snapshot summary)))
+                (if (number? id) id -1))
+              (catch (e) -1))))
+      (try (mutate:safe-yield) (catch (e) #f))
+      (let ((mut (try (mutate:rebind name body summary) (catch (e) #f))))
+        (if (eq? mut #t)
+          (let ((ev (try (begin (eval-current) #t) (catch (e) #f))))
+            (if ev
+              (list (cons ":ok" #t) (cons ":reason" "applied") (cons ":snap" snap))
+              (begin
+                (if (and (number? snap) (>= snap 0))
+                  (try (begin (ast:restore snap) (eval-current) #t) (catch (e) #f))
+                  #f)
+                (list (cons ":ok" #f) (cons ":reason" "eval-failed") (cons ":snap" snap)))))
+          (list (cons ":ok" #f) (cons ":reason" "rebind-failed") (cons ":snap" snap)))))))
+
+(define (unify:observe-score x)
+  (try (score x) (catch (e) -999999)))
+
+; Goal: score(x) = (* x 3) for samples.
+(define (unify:verify-score)
+  (and (= (unify:observe-score 7) 21)
+       (= (unify:observe-score 0) 0)
+       (= (unify:observe-score 4) 12)))
+
+; MiniMax-M3 only — env set by scripts/env-minimax.sh
+(define (unify:propose-body!)
+  (unify:stats-bump! "proposes")
+  (unify:escape-note! 30)
+  (let ((key (getenv "LLM_API_KEY")))
+    (if (or (not (string? key)) (= (string-length key) 0))
+      (begin
+        (unify:stats-bump! "propose_fail")
+        (list (cons ":ok" #f) (cons ":body" "") (cons ":reason" "no-key")))
+      (let* ((sys
+               "You are a denseness mutation proposer for Aura Unify.
+Reply with EXACTLY one line, no markdown:
+BODY|(lambda (x) (* x 3))
+or BODY|(lambda (x) <pure arithmetic on x only>)
+No set!, define, require, or side effects.")
+             (usr
+               (string-append
+                 "Current score(7)="
+                 (number->string (unify:observe-score 7))
+                 " Goal: score(x)=(* x 3) so score(7)=21."
+                 " Reply one line: BODY|(lambda (x) (* x 3))"))
+             (r (try (llm:chat sys usr) (catch (e) #f))))
+        (if (not (and (hash? r) (hash-ref r "ok" #f)))
+          (begin
+            (unify:stats-bump! "propose_fail")
+            (list (cons ":ok" #f)
+                  (cons ":body" "")
+                  (cons ":reason" "llm-fail")
+                  (cons ":raw" (if (hash? r) (hash-ref r "content" "") ""))))
+          (let ((raw (hash-ref r "content" "")))
+            (let ((body (unify-extract-body raw)))
+              (if body
+                (begin
+                  (unify:stats-bump! "propose_ok")
+                  (list (cons ":ok" #t) (cons ":body" body) (cons ":raw" raw)))
+                (begin
+                  (unify:stats-bump! "propose_fail")
+                  (list (cons ":ok" #f)
+                        (cons ":body" "")
+                        (cons ":reason" "parse-fail")
+                        (cons ":raw" raw)))))))))))
+
+; Extract (lambda ...) from model text; prefer last BODY| line or last lambda form.
+(define (unify-extract-body text)
+  (if (not (string? text))
+    #f
+    (let ((n (string-length text))
+          (i 0)
+          (last #f))
+      (while (lambda () (< i n))
+        (lambda ()
+          (let ((j i))
+            (while (lambda () (and (< j n) (not (= (string-ref text j) 10))))
+              (lambda () (set! j (+ j 1))))
+            (let ((line (substring text i j)))
+              (if (and (string? line) (string-prefix? line "BODY|"))
+                (set! last (substring line 5 (string-length line)))
+                (if (and (string? line) (string-prefix? line "(lambda"))
+                  (set! last line)
+                  #f))
+              (set! i (+ j 1))))))
+      (if (and (string? last)
+               (string-prefix? last "(lambda")
+               (string-contains? last "x")
+               (not (string-contains? last "set!"))
+               (not (string-contains? last "define"))
+               (not (string-contains? last "require")))
+        last
+        #f))))
+
+; One evolution round. force-body: optional string to skip LLM (offline tests).
+(define (unify:loop-once! force-body)
+  (unify:stats-bump! "rounds")
+  (if (unify:verify-score)
+    (begin
+      (unify:stats-bump! "verify_ok")
+      (list (cons ":ok" #t) (cons ":decision" "skip") (cons ":reason" "already-correct")))
+    (let ((prop
+            (if (and (string? force-body) (> (string-length force-body) 0))
+              (begin
+                (unify:stats-bump! "proposes")
+                (unify:stats-bump! "propose_ok")
+                (list (cons ":ok" #t) (cons ":body" force-body)))
+              (unify:propose-body!))))
+      (if (not (unify:alist-ref ":ok" prop #f))
+        (list (cons ":ok" #f)
+              (cons ":decision" "refuse")
+              (cons ":reason" (unify:alist-ref ":reason" prop "propose")))
+        (let ((body (unify:alist-ref ":body" prop ""))
+              (snap (unify:snapshot "pre-mut")))
+          (let ((rb (unify:rebind-safe "score" body "unify-loop")))
+            (if (not (unify:alist-ref ":ok" rb #f))
+              (begin
+                (unify:stats-bump! "rollbacks")
+                (list (cons ":ok" #f)
+                      (cons ":decision" "rollback")
+                      (cons ":reason" (unify:alist-ref ":reason" rb "rebind"))))
+              (if (unify:verify-score)
+                (begin
+                  (unify:stats-bump! "commits")
+                  (unify:stats-bump! "verify_ok")
+                  (list (cons ":ok" #t)
+                        (cons ":decision" "commit")
+                        (cons ":body" body)
+                        (cons ":snap" snap)))
+                (begin
+                  (unify:restore snap)
+                  (unify:stats-bump! "rollbacks")
+                  (unify:stats-bump! "verify_fail")
+                  (list (cons ":ok" #f)
+                        (cons ":decision" "rollback")
+                        (cons ":reason" "verify-fail")
+                        (cons ":body" body)))))))))))

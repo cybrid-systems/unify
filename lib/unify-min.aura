@@ -1,0 +1,17 @@
+; lib/unify-min.aura — facade
+; Form order: export before require.
+
+(export unify:stats unify:stats-reset! unify:stats-ref unify:stats-bump!
+        unify:stats-set! unify:stats-alist unify:alist-ref
+        unify:check-eq unify:check-true unify:check-ge
+        unify:escape-note!
+        unify:loop-version unify:min-version
+        unify:install-subject unify:safety-ok?
+        unify:snapshot unify:restore unify:rebind-safe
+        unify:observe-score unify:verify-score
+        unify:propose-body! unify:loop-once!)
+
+(require "unify-measure" all:)
+(require "unify-loop" all:)
+
+(define unify:min-version 1)

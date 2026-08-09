@@ -1,0 +1,87 @@
+; lib/unify-measure.aura — synthesis metrology
+; Form order: export before require (#2766).
+
+(export unify:stats unify:stats-reset! unify:stats-ref unify:stats-bump!
+        unify:stats-set! unify:stats-alist unify:alist-ref
+        unify:check-eq unify:check-true unify:check-ge
+        unify:escape-note!)
+
+(define (unify:alist-ref key lst default)
+  (let loop ((ys lst))
+    (cond ((null? ys) default)
+          ((not (pair? (car ys))) (loop (cdr ys)))
+          ((equal? (car (car ys)) key) (cdr (car ys)))
+          (else (loop (cdr ys))))))
+
+(define (unify:make-stats)
+  (let ((h (hash)))
+    (hash-set! h "rounds" 0)
+    (hash-set! h "commits" 0)
+    (hash-set! h "rollbacks" 0)
+    (hash-set! h "proposes" 0)
+    (hash-set! h "propose_ok" 0)
+    (hash-set! h "propose_fail" 0)
+    (hash-set! h "verify_ok" 0)
+    (hash-set! h "verify_fail" 0)
+    (hash-set! h "host_flags" 0)
+    (hash-set! h "escapes" 0)
+    (hash-set! h "correctness_ok" 0)
+    (hash-set! h "correctness_fail" 0)
+    h))
+
+(define *unify-stats* (unify:make-stats))
+
+(define (unify:stats) *unify-stats*)
+
+(define (unify:stats-reset!)
+  (set! *unify-stats* (unify:make-stats))
+  *unify-stats*)
+
+(define (unify:stats-ref key)
+  (let ((v (hash-ref *unify-stats* key 0)))
+    (if (number? v) v 0)))
+
+(define (unify:stats-bump! key)
+  (let ((n (+ 1 (unify:stats-ref key))))
+    (hash-set! *unify-stats* key n)
+    n))
+
+(define (unify:stats-set! key val)
+  (hash-set! *unify-stats* key val)
+  val)
+
+(define (unify:stats-alist)
+  (list (cons "rounds" (unify:stats-ref "rounds"))
+        (cons "commits" (unify:stats-ref "commits"))
+        (cons "rollbacks" (unify:stats-ref "rollbacks"))
+        (cons "proposes" (unify:stats-ref "proposes"))
+        (cons "propose_ok" (unify:stats-ref "propose_ok"))
+        (cons "propose_fail" (unify:stats-ref "propose_fail"))
+        (cons "verify_ok" (unify:stats-ref "verify_ok"))
+        (cons "verify_fail" (unify:stats-ref "verify_fail"))
+        (cons "host_flags" (unify:stats-ref "host_flags"))
+        (cons "escapes" (unify:stats-ref "escapes"))
+        (cons "correctness_ok" (unify:stats-ref "correctness_ok"))
+        (cons "correctness_fail" (unify:stats-ref "correctness_fail"))))
+
+(define (unify:check-eq actual expected)
+  (if (and (number? actual) (number? expected) (= actual expected))
+    (begin (unify:stats-bump! "correctness_ok") #t)
+    (begin (unify:stats-bump! "correctness_fail") #f)))
+
+(define (unify:check-true v)
+  (if v
+    (begin (unify:stats-bump! "correctness_ok") #t)
+    (begin (unify:stats-bump! "correctness_fail") #f)))
+
+(define (unify:check-ge actual lo)
+  (if (and (number? actual) (number? lo) (>= actual lo))
+    (begin (unify:stats-bump! "correctness_ok") #t)
+    (begin (unify:stats-bump! "correctness_fail") #f)))
+
+(define (unify:escape-note! reason)
+  (unify:stats-bump! "escapes")
+  (if (number? reason)
+    (unify:stats-set! "last_escape_reason" reason)
+    #f)
+  (unify:stats-ref "escapes"))

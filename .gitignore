@@ -1,0 +1,8 @@
+*.log
+/tmp/
+notes/issue-drafts/*.md
+!notes/issue-drafts/.gitkeep
+notes/issue-drafts/*.url
+.env
+*.pem
+keys/

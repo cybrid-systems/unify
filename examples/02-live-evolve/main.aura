@@ -1,0 +1,109 @@
+; examples/02-live-evolve/main.aura
+;
+; Synthesis loop: install score=double → MiniMax-M3 (or forced BODY) → triple.
+;
+;   source ./scripts/env-minimax.sh
+;   ./scripts/run-aura.sh examples/02-live-evolve/main.aura
+;
+; Offline: no key → force-body path (still exercises mutate/verify).
+
+(require "std/string" all:)
+(require "unify-min" all:)
+
+(unify:stats-reset!)
+
+(display "=== Unify 02-live-evolve: MiniMax-M3 synthesis loop ===")
+(newline)
+(display "unify:min-version=")
+(display unify:min-version)
+(display " loop-version=")
+(display unify:loop-version)
+(newline)
+
+(define key (getenv "LLM_API_KEY"))
+(define live-env (getenv "UNIFY_LIVE"))
+(define live?
+  (and (string? key) (> (string-length key) 0)
+       (string? live-env)
+       (or (equal? live-env "1") (equal? live-env "live") (equal? live-env "true"))))
+
+(display "live=")
+(display live?)
+(display " model=")
+(display (getenv "LLM_MODEL"))
+(display " base=")
+(display (getenv "LLM_BASE_URL"))
+(newline)
+
+(define installed
+  (unify:install-subject "(define score (lambda (x) (* x 2)))"))
+
+(if (not installed)
+  (begin
+    (display "FAIL: install subject")
+    (newline)
+    (display "RESULT fail example=02-live-evolve reason=install")
+    (newline))
+  (begin
+    (display "R0 score(7)=")
+    (display (unify:observe-score 7))
+    (display " (double)")
+    (newline)
+    (display "safety-ok=")
+    (display (unify:safety-ok?))
+    (newline)
+
+    (let* ((force
+             (if live? "" "(lambda (x) (* x 3))"))
+           (r1 (unify:loop-once! force))
+           (r1-ok
+             (and (unify:check-true (unify:alist-ref ":ok" r1 #f))
+                  (unify:check-true (unify:verify-score))
+                  (unify:check-eq (unify:observe-score 7) 21)))
+           (r2 (unify:loop-once! force))
+           (r2-ok
+             (and (unify:check-true (unify:alist-ref ":ok" r2 #f))
+                  (equal? (unify:alist-ref ":decision" r2 #f) "skip"))))
+      (display "R1: ")
+      (write r1)
+      (newline)
+      (display "R1 ok=")
+      (display r1-ok)
+      (display " score(7)=")
+      (display (unify:observe-score 7))
+      (newline)
+      (display "R2 skip: ")
+      (write r2)
+      (newline)
+      (display "R2 ok=")
+      (display r2-ok)
+      (newline)
+      (display "stats: ")
+      (write (unify:stats-alist))
+      (newline)
+
+      (let ((all-ok
+              (and r1-ok r2-ok
+                   (unify:safety-ok?)
+                   (= (unify:stats-ref "correctness_fail") 0)
+                   (>= (unify:stats-ref "commits") 1)
+                   (>= (unify:stats-ref "rounds") 2))))
+        (if all-ok
+          (begin
+            (display "PASS: synthesis loop commit+skip")
+            (newline)
+            (display "RESULT pass example=02-live-evolve live=")
+            (display live?)
+            (display " escapes=")
+            (display (unify:stats-ref "escapes"))
+            (newline))
+          (begin
+            (display "FAIL: synthesis loop")
+            (newline)
+            (display "RESULT fail example=02-live-evolve")
+            (newline)
+            (display "  r1=")
+            (display r1-ok)
+            (display " r2=")
+            (display r2-ok)
+            (newline)))))))
