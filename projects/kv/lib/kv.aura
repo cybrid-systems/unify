@@ -2,6 +2,8 @@
 ; Phase 0..2: open + set/get + del/has?/size/keys/clear/overwrite.
 ; Phase 3:   multi-key stress + isolation.
 ; Phase 4:   batch / composite helpers (mset, mget, update, merge, copy).
+; Phase 5:   iteration & query helpers (values, entries, filter, find,
+;             empty?, for-each).
 ;
 ; Store representation: alist of (key . val) pairs.
 ;   * Keys are strings.
@@ -25,9 +27,15 @@
         kv:mget
         kv:update
         kv:merge
-        kv:copy)
+        kv:copy
+        kv:values
+        kv:entries
+        kv:filter
+        kv:find
+        kv:empty?
+        kv:for-each)
 
-(define kv:version 2)
+(define kv:version 3)
 
 ; ---------------------------------------------------------------------------
 ; Internal alist primitives.
@@ -166,3 +174,54 @@
 ; The store is already an immutable value, so this is the identity.
 ; Provided for API symmetry / explicit-isolation clarity.
 (define (kv:copy store) store)
+
+; ---------------------------------------------------------------------------
+; Phase 5 iteration & query helpers.
+; All derive from the existing `_fold` / `_map` primitives; insertion
+; order is preserved by construction. No mutation, no FS escapes.
+; ---------------------------------------------------------------------------
+
+; (kv:values store) -> list of values in insertion order.
+(define (kv:values store)
+  (kv:_map store (lambda (k v) v)))
+
+; (kv:entries store) -> alist ((k . v) ...) in insertion order.
+(define (kv:entries store)
+  (kv:_map store (lambda (k v) (cons k v))))
+
+; (kv:filter store proc) -> store
+; Returns a new store containing only entries for which (proc k v) is #t.
+; Folds left-to-right, so the resulting store preserves the original
+; insertion order among survivors.
+(define (kv:filter store proc)
+  (kv:_fold store (quote ())
+    (lambda (k v acc)
+      (if (proc k v)
+        (kv:_set acc k v)
+        acc))))
+
+; (kv:find store proc) -> (k . v) | #f
+; Returns the first entry (as a cons cell) for which (proc k v) is #t,
+; or #f if no entry matches (or the store is empty).
+(define (kv:find store proc)
+  (if (null? store)
+    #f
+    (let ((p (car store)))
+      (if (and (pair? p) (proc (car p) (cdr p)))
+        p
+        (kv:find (cdr store) proc)))))
+
+; (kv:empty? store) -> #t | #f
+; Convenience predicate; equivalent to (null? store) but exposed under
+; the kv: namespace so callers don't need to know the internal shape.
+(define (kv:empty? store)
+  (null? store))
+
+; (kv:for-each store proc) -> #t
+; Calls (proc k v) for each entry in insertion order. Returns #t.
+; Provided for side-effecting iteration; pure users should prefer
+; kv:values / kv:entries / kv:filter / kv:find.
+(define (kv:for-each store proc)
+  (kv:_fold store #t
+    (lambda (k v acc) (proc k v) acc)))
+

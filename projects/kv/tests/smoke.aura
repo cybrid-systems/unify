@@ -72,6 +72,92 @@
   (t "T17-del-missing" (let ((s (kv:set (kv:open) "a" 1)))
                          (equal? (kv:get (kv:del s "zzz") "a") 1))))
 
+; ---- Phase 5: iteration & query helpers ----
+
+; T18: values() returns values in insertion order; size matches.
+(let* ((s (kv:open))
+       (s (kv:set s "a" 1))
+       (s (kv:set s "b" 2))
+       (s (kv:set s "c" 3))
+       (vs (kv:values s)))
+  (t "T18-values-order"
+     (and (= (length vs) 3)
+          (equal? (car vs) 1)
+          (equal? (car (cdr vs)) 2)
+          (equal? (car (cdr (cdr vs))) 3))))
+
+; T19: filter() keeps matching entries, drops others, preserves order.
+(let* ((s (kv:open))
+       (s (kv:set s "a" 1))
+       (s (kv:set s "b" 2))
+       (s (kv:set s "c" 3))
+       (s (kv:set s "d" 4))
+       (f (kv:filter s (lambda (k v) (> v 2))))
+       (fk (kv:keys f)))
+  (t "T19-filter"
+     (and (= (kv:size f) 2)
+          (equal? (kv:get f "c") 3)
+          (equal? (kv:get f "d") 4)
+          (eq? (kv:get f "a") #f)
+          (eq? (kv:get f "b") #f)
+          (pair? fk)
+          (equal? (car fk) "c")
+          (equal? (car (cdr fk)) "d"))))
+
+; T19b: filter() on an empty store is empty.
+(t "T19b-filter-empty"
+   (= (kv:size (kv:filter (kv:open) (lambda (k v) #t))) 0))
+
+; T20: empty? distinguishes empty from populated stores.
+(t "T20-empty?"
+   (and (kv:empty? (kv:open))
+        (not (kv:empty? (kv:set (kv:open) "x" 1)))
+        (kv:empty? (kv:clear (kv:set (kv:open) "y" 2)))))
+
+; T21: find() returns first matching (k . v); miss yields #f.
+(let* ((s (kv:open))
+       (s (kv:set s "k1" 10))
+       (s (kv:set s "k2" 20))
+       (s (kv:set s "k3" 30))
+       (hit (kv:find s (lambda (k v) (> v 15))))
+       (miss (kv:find s (lambda (k v) (> v 100)))))
+  (t "T21-find"
+     (and (pair? hit)
+          (equal? (car hit) "k2")
+          (equal? (cdr hit) 20)
+          (eq? miss #f))))
+
+; T21b: find() on an empty store yields #f.
+(t "T21b-find-empty"
+   (eq? (kv:find (kv:open) (lambda (k v) #t)) #f))
+
+; T22: entries() returns alist shape with correct order.
+(let* ((s (kv:open))
+       (s (kv:set s "a" 1))
+       (s (kv:set s "b" 2))
+       (es (kv:entries s)))
+  (t "T22-entries"
+     (and (= (length es) 2)
+          (pair? (car es))
+          (equal? (car (car es)) "a")
+          (equal? (cdr (car es)) 1)
+          (pair? (cdr es))
+          (equal? (car (car (cdr es))) "b")
+          (equal? (cdr (car (cdr es))) 2))))
+
+; T23: for-each() visits every entry in insertion order and returns #t.
+(let* ((s (kv:open))
+       (s (kv:set s "a" 1))
+       (s (kv:set s "b" 2))
+       (s (kv:set s "c" 3))
+       (copied (kv:open))
+       (_ (kv:for-each s (lambda (k v) (set! copied (kv:set copied k v))))))
+  (t "T23-for-each"
+     (and (= (kv:size copied) 3)
+          (equal? (kv:get copied "a") 1)
+          (equal? (kv:get copied "b") 2)
+          (equal? (kv:get copied "c") 3))))
+
 (display "SCORE ")
 (display pass)
 (display "/")
@@ -91,3 +177,4 @@
     (display " total=")
     (display total)
     (newline)))
+
