@@ -59,15 +59,37 @@ if run_dir and (run_dir / "pid").is_file():
 
 print("Unify evolve")
 print("────────────")
+wd_pid_f = log_root / "watchdog.pid"
+wd_alive = False
+wd_pid = None
+if wd_pid_f.is_file():
+    try:
+        wd_pid = int(wd_pid_f.read_text().strip())
+        os.kill(wd_pid, 0)
+        wd_alive = True
+    except Exception:
+        wd_alive = False
+
+want = (log_root / "WANT_RUN").is_file()
+
 if alive:
     print(f"  loop     RUNNING  pid={pid}")
 elif pid:
     print(f"  loop     STOPPED  (stale pid={pid})")
 else:
-    print("  loop     STOPPED  (no pid — start with: ./scripts/evolve.sh)")
+    print("  loop     STOPPED  (start: ./scripts/evolve.sh | resume: ./scripts/evolve.sh resume)")
 
-if (log_root / "STOP").is_file():
-    print("  note     STOP requested (exits after current cycle)")
+if wd_alive:
+    print(f"  watchdog RUNNING  pid={wd_pid}  (auto-restart if loop dies)")
+elif want:
+    print("  watchdog STOPPED  (WANT_RUN set — start: ./scripts/evolve.sh resume)")
+else:
+    print("  watchdog off")
+
+if (log_root / "STOP").is_file() and not want:
+    print("  note     clean stop requested")
+elif (log_root / "STOP").is_file() and want:
+    print("  note     STOP file present but WANT_RUN set — watchdog will clear & restart")
 
 # cycle status
 cycle_line = ""
@@ -221,7 +243,7 @@ print("  tail -f logs/runs/latest/master.log          # live stream")
 print("  cat projects/kv/evolve/last-review.md        # LLM review + plan")
 print("  tail projects/kv/evolve/journal.jsonl        # accept/reject history")
 print("  AURA_PATH=projects/kv/lib:lib ./scripts/run-aura.sh projects/kv/tests/smoke.aura")
-print("  ./scripts/evolve.sh stop | ./scripts/evolve.sh   # stop / restart")
+print("  ./scripts/evolve.sh stop | resume | status        # stop / recover / progress")
 
 if verbose and run_dir:
     print()

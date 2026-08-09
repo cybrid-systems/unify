@@ -67,12 +67,27 @@ No LLM during offline four-span smoke, git-probe, or pure test runs.
 | `evolve/last-patch.md` | Raw controller output |
 | `evolve/journal.jsonl` | Accepted/rejected memory for next control |
 
-## Entry
+## Entry & resume
 
 ```bash
-./scripts/evolve.sh                      # continuous closed loop
+./scripts/evolve.sh                      # loop + watchdog
+./scripts/evolve.sh status
+./scripts/evolve.sh stop                 # clean stop (no auto-restart)
+./scripts/evolve.sh resume               # after crash/network: pull if safe + restart
 ./scripts/project-evolve.sh projects/kv  # one generation
 ```
+
+### Survive network / process death
+
+| Mechanism | Behavior |
+|-----------|----------|
+| Workspace state | `projects/kv/lib`, `tests`, `evolve/state.json` — never reset on restart |
+| Watchdog | `evolve-watchdog.sh` polls every 60s; if loop PID dead and `WANT_RUN` set → restart |
+| LLM timeout | retries + soft-reject; next generation continues |
+| Git push fail | non-fatal; local commits remain; next accept retries push |
+| `resume` | `git fetch`; ff-only pull if local not ahead; ensure loop+watchdog |
+
+Do **not** delete `projects/kv` to “reset” unless you mean a new project.
 
 ## Legacy
 

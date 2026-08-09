@@ -28,6 +28,7 @@ required=(
   scripts/enqueue-self-evolve.sh
   scripts/start.sh
   scripts/evolve.sh
+  scripts/evolve-watchdog.sh
   scripts/durable-evolve.sh
   scripts/project-evolve.sh
   scripts/llm_controller.py
