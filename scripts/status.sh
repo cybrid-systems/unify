@@ -58,7 +58,10 @@ echo "--- recent Aura issue filings (drafts with .url) ---"
 draft_dir="$ROOT/notes/issue-drafts"
 if compgen -G "$draft_dir"/*.url >/dev/null 2>&1; then
   for u in "$draft_dir"/*.url; do
-    echo "  $(basename "$u" .url): $(cat "$u")"
+    base="$(basename "$u")"
+    base="${base%.url}"
+    base="${base%.md}"
+    echo "  $base → $(cat "$u")"
   done
 else
   echo "(none yet)"
