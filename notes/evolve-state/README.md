@@ -3,10 +3,10 @@
 | field | value |
 |-------|-------|
 | mode | spacetime-explore |
-| generation | 17 |
-| last axis | score (aether) |
-| winner body | `(lambda (x) (* x (+ x 1) (- x 1)))` |
-| candidates tried | 9/9 |
+| generation | 18 |
+| last axis | kernel (hephaestus) |
+| winner body | `(lambda (n) (/ (* n (- n 1)) 2))` |
+| candidates tried | 4/4 |
 
 ## Four axes (composition)
 
