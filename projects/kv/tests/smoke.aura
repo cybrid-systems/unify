@@ -158,6 +158,88 @@
           (equal? (kv:get copied "b") 2)
           (equal? (kv:get copied "c") 3))))
 
+; ---- Phase 6: fold / predicate / projection / selection helpers ----
+
+; T24: reduce() accumulates in insertion order; init wins on empty.
+(let* ((s (kv:open))
+       (s (kv:set s "a" 1))
+       (s (kv:set s "b" 2))
+       (s (kv:set s "c" 3))
+       (r (kv:reduce s 0 (lambda (k v acc) (+ acc v)))))
+  (t "T24-reduce"
+     (and (= r 6)
+          (= (kv:reduce (kv:open) 99 (lambda (k v acc) (+ acc v))) 99))))
+
+; T25: any? is short-circuit existential.
+(let* ((s (kv:open))
+       (s (kv:set s "a" 1))
+       (s (kv:set s "b" 5))
+       (s (kv:set s "c" 10)))
+  (t "T25-any"
+     (and (kv:any? s (lambda (k v) (> v 3)))
+          (not (kv:any? s (lambda (k v) (> v 100)))))))
+
+; T26: every? is short-circuit universal.
+(let* ((s (kv:open))
+       (s (kv:set s "a" 1))
+       (s (kv:set s "b" 5))
+       (s (kv:set s "c" 10)))
+  (t "T26-every"
+     (and (kv:every? s (lambda (k v) (> v 0)))
+          (not (kv:every? s (lambda (k v) (> v 3)))))))
+
+; T26b: any?/every? vacuous semantics on an empty store.
+(t "T26b-any-empty" (not (kv:any? (kv:open) (lambda (k v) #t))))
+(t "T26c-every-empty" (kv:every? (kv:open) (lambda (k v) #t)))
+
+; T27: pick() selects only listed keys, drops missing, preserves store order.
+(let* ((s (kv:open))
+       (s (kv:set s "a" 1))
+       (s (kv:set s "b" 2))
+       (s (kv:set s "c" 3))
+       (p (kv:pick s (list "c" "a" "ghost")))
+       (pk (kv:keys p)))
+  (t "T27-pick"
+     (and (= (kv:size p) 2)
+          (equal? (kv:get p "a") 1)
+          (equal? (kv:get p "c") 3)
+          (eq? (kv:get p "b") #f)
+          (equal? (car pk) "a")
+          (equal? (car (cdr pk)) "c"))))
+
+; T28: omit() removes listed keys, preserves survivor order.
+(let* ((s (kv:open))
+       (s (kv:set s "a" 1))
+       (s (kv:set s "b" 2))
+       (s (kv:set s "c" 3))
+       (s (kv:set s "d" 4))
+       (o (kv:omit s (list "b" "d")))
+       (ok (kv:keys o)))
+  (t "T28-omit"
+     (and (= (kv:size o) 2)
+          (eq? (kv:get o "b") #f)
+          (eq? (kv:get o "d") #f)
+          (equal? (kv:get o "a") 1)
+          (equal? (kv:get o "c") 3)
+          (equal? (car ok) "a")
+          (equal? (car (cdr ok)) "c"))))
+
+; T29: map-values() transforms values, keys + order preserved.
+(let* ((s (kv:open))
+       (s (kv:set s "a" 1))
+       (s (kv:set s "b" 2))
+       (s (kv:set s "c" 3))
+       (m (kv:map-values s (lambda (v) (* v 10))))
+       (mk (kv:keys m)))
+  (t "T29-map-values"
+     (and (= (kv:size m) 3)
+          (equal? (kv:get m "a") 10)
+          (equal? (kv:get m "b") 20)
+          (equal? (kv:get m "c") 30)
+          (equal? (car mk) "a")
+          (equal? (car (cdr mk)) "b")
+          (equal? (car (cdr (cdr mk))) "c"))))
+
 (display "SCORE ")
 (display pass)
 (display "/")
@@ -177,4 +259,3 @@
     (display " total=")
     (display total)
     (newline)))
-

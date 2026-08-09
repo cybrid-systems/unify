@@ -1,8 +1,8 @@
 {
   "project": "projects/kv",
-  "generation": 4,
-  "best_score": 25,
-  "best_total": 25,
+  "generation": 5,
+  "best_score": 32,
+  "best_total": 33,
   "status": "ok",
   "history": [
     {
@@ -39,9 +39,20 @@
       "candidate": "25/25",
       "review": "**Strengths**\n- Phases 0\u20134 are all green: 17/17 passing including stress + isolation + Phase 4 batch helpers.\n- Pure functional store (alist of cons cells), defensive skipping of non-pair cells, insertion-order preserved everywhere \u2014 strong denseness posture, no FS escapes.\n- Export-before-define discipline maintained; API names stable since v1.\n- Phase 4 (mset/mget/update/merge/copy) implemented even though SPEC marks it optional \u2014 good headroom.\n\n**Failures / Risks**\n- No real \"host escape\" ri",
       "direction": "Advance **Phase 5: iteration & query helpers** while keeping all T1\u2013T17 green. Implement (all pure, all derived from existing internals):\n\n- `kv:values` \u2014 values in insertion order (companion to `kv:keys`)\n- `kv:entries` \u2014 alist view\n- `kv:filter` \u2014 keep entries where `(proc k v)` is `#t`\n- `kv:find` \u2014 first matching `(k . v)`, else `#f`\n- `kv:empty?` \u2014 convenience predicate\n- `kv:for-each` \u2014 iterate for side effects, returns `#t`\n\nBump `kv:version` to `3`. Extend `tests/smoke.aura` with **T18\u2013T"
+    },
+    {
+      "ts": "2026-08-09T05:29Z",
+      "phase": "control-loop",
+      "generation": 5,
+      "accepted": true,
+      "reason": "score-improved",
+      "baseline": "25/25",
+      "candidate": "32/33",
+      "review": "- All 25/25 green; Phases 0\u20135 of the lib comment roadmap are implemented (open, set/get, del/has?/size, keys/clear, multi-key stress + isolation, batch helpers, iteration & query helpers).\n- Pure Aura throughout \u2014 store is a functional alist of `(key . val)` pairs; insertion order is preserved everywhere; no FS / no network / no host escape used.\n- The SPEC table lists phases only through Phase 4 (batch helpers); Phase 5 (iteration/query) was a home-grown extension that we already locked in at g",
+      "direction": "- **Advance to Phase 6: fold / predicate / projection / selection helpers.** Everything pure-functional, derived from existing `_fold`/`_map` primitives, insertion-order preserved.\n- New ops, all distinct from Phase 5:\n  - `kv:reduce` \u2014 `(store init proc)` left fold, `proc` is `(k v acc) -> acc`\n  - `kv:any?`  \u2014 short-circuit existential; `#f` on empty (vacuous)\n  - `kv:every?` \u2014 short-circuit universal; `#t` on empty (vacuous)\n  - `kv:pick`  \u2014 sub-store of listed keys; missing keys dropped; ord"
     }
   ],
-  "updated": "2026-08-09T05:27Z",
-  "last_review": "**Strengths**\n- Phases 0\u20134 are all green: 17/17 passing including stress + isolation + Phase 4 batch helpers.\n- Pure functional store (alist of cons cells), defensive skipping of non-pair cells, insertion-order preserved everywhere \u2014 strong denseness posture, no FS escapes.\n- Export-before-define discipline maintained; API names stable since v1.\n- Phase 4 (mset/mget/update/merge/copy) implemented even though SPEC marks it optional \u2014 good headroom.\n\n**Failures / Risks**\n- No real \"host escape\" risk: zero `write-file`, no I/O.\n- Diminishing returns: two consecutive generations committed at full-green (17/17) with no new capability \u2014 controller should advance SPEC, not merely shuffle tests.\n- Denseness opportunities left on the table: no `values`, no alist view, no functional `filter`, no predicate-based `find`, no `empty?` convenience, no iteration hook (`for-each`).\n\n**Denseness**\n- Adding pure helpers (no FS, no mutation, all derived from existing `_fold`/`_map`) keeps the host-surface minimal and stays on-spec.",
-  "last_direction": "Advance **Phase 5: iteration & query helpers** while keeping all T1\u2013T17 green. Implement (all pure, all derived from existing internals):\n\n- `kv:values` \u2014 values in insertion order (companion to `kv:keys`)\n- `kv:entries` \u2014 alist view\n- `kv:filter` \u2014 keep entries where `(proc k v)` is `#t`\n- `kv:find` \u2014 first matching `(k . v)`, else `#f`\n- `kv:empty?` \u2014 convenience predicate\n- `kv:for-each` \u2014 iterate for side effects, returns `#t`\n\nBump `kv:version` to `3`. Extend `tests/smoke.aura` with **T18\u2013T23** that exercise the new helpers (including edge cases: empty store, miss, insertion-order preservation in filter/find). Do NOT touch T1\u2013T17 or existing internals. No FS, no network."
+  "updated": "2026-08-09T05:29Z",
+  "last_review": "- All 25/25 green; Phases 0\u20135 of the lib comment roadmap are implemented (open, set/get, del/has?/size, keys/clear, multi-key stress + isolation, batch helpers, iteration & query helpers).\n- Pure Aura throughout \u2014 store is a functional alist of `(key . val)` pairs; insertion order is preserved everywhere; no FS / no network / no host escape used.\n- The SPEC table lists phases only through Phase 4 (batch helpers); Phase 5 (iteration/query) was a home-grown extension that we already locked in at gen 4. We have headroom for a new phase without disturbing any green test.\n- Denseness posture is strong: every public op derives from `_fold` / `_map` / `_set` / `_del`. The one subtle weakness to call out is \"any value lookup that is legitimately `#f` is indistinguishable from a miss\" \u2014 it is consistent with `kv:get`'s contract but worth a one-line note for `kv:pick`.\n- Export-before-define order has held across gens 1\u20134; no define-after-mutate hazard has bitten us.",
+  "last_direction": "- **Advance to Phase 6: fold / predicate / projection / selection helpers.** Everything pure-functional, derived from existing `_fold`/`_map` primitives, insertion-order preserved.\n- New ops, all distinct from Phase 5:\n  - `kv:reduce` \u2014 `(store init proc)` left fold, `proc` is `(k v acc) -> acc`\n  - `kv:any?`  \u2014 short-circuit existential; `#f` on empty (vacuous)\n  - `kv:every?` \u2014 short-circuit universal; `#t` on empty (vacuous)\n  - `kv:pick`  \u2014 sub-store of listed keys; missing keys dropped; order follows `store`\n  - `kv:omit`  \u2014 sub-store minus listed keys; survivors keep order\n  - `kv:map-values` \u2014 transform values via `(proc v)`; keys + order preserved\n- Bump `kv:version` from `3` to `4`.\n- Extend `tests/smoke.aura` with **T24\u2013T29** (8 new tests) covering happy paths *and* empty-store / boundary semantics.\n- **Do not touch** internals (`kv:_ref`/`_has`/`_set`/`_del`/`_fold`/`_map`) or Phases 0\u20135 APIs. No FS escapes."
 }

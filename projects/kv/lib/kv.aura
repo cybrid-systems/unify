@@ -4,6 +4,8 @@
 ; Phase 4:   batch / composite helpers (mset, mget, update, merge, copy).
 ; Phase 5:   iteration & query helpers (values, entries, filter, find,
 ;             empty?, for-each).
+; Phase 6:   fold / predicate / projection / selection helpers
+;             (reduce, any?, every?, pick, omit, map-values).
 ;
 ; Store representation: alist of (key . val) pairs.
 ;   * Keys are strings.
@@ -33,9 +35,15 @@
         kv:filter
         kv:find
         kv:empty?
-        kv:for-each)
+        kv:for-each
+        kv:reduce
+        kv:any?
+        kv:every?
+        kv:pick
+        kv:omit
+        kv:map-values)
 
-(define kv:version 3)
+(define kv:version 4)
 
 ; ---------------------------------------------------------------------------
 ; Internal alist primitives.
@@ -225,3 +233,64 @@
   (kv:_fold store #t
     (lambda (k v acc) (proc k v) acc)))
 
+; ---------------------------------------------------------------------------
+; Phase 6 fold / predicate / projection / selection helpers.
+; Pure functional; preserve insertion order; no FS escapes.
+; ---------------------------------------------------------------------------
+
+; (kv:reduce store init proc) -> result.
+; `proc` is (k v acc) -> acc. Equivalent to a left fold over entries in
+; insertion order. An empty store returns `init` unchanged.
+(define (kv:reduce store init proc)
+  (kv:_fold store init proc))
+
+; (kv:any? store proc) -> #t | #f.
+; True iff at least one entry satisfies (proc k v). Short-circuits on
+; the first hit. On an empty store the answer is #f (vacuous).
+(define (kv:any? store proc)
+  (if (null? store)
+    #f
+    (let ((p (car store)))
+      (if (and (pair? p) (proc (car p) (cdr p)))
+        #t
+        (kv:any? (cdr store) proc)))))
+
+; (kv:every? store proc) -> #t | #f.
+; True iff every entry satisfies (proc k v). Short-circuits on first miss.
+; On an empty store the answer is #t (vacuous).
+(define (kv:every? store proc)
+  (if (null? store)
+    #t
+    (let ((p (car store)))
+      (if (and (pair? p) (proc (car p) (cdr p)))
+        (kv:every? (cdr store) proc)
+        #f))))
+
+; (kv:pick store keys) -> new store containing only the listed keys
+; that are present in `store`. Missing keys are silently dropped
+; (consistent with kv:get/#f-as-miss semantics). Insertion order of the
+; survivors follows `store`, not the order of the input `keys` list.
+; Note: a value that is literally #f cannot be distinguished from a
+; miss — documented limitation consistent with kv:get.
+(define (kv:pick store keys)
+  (let loop ((xs keys) (acc (quote ())))
+    (if (null? xs)
+      acc
+      (let ((k (car xs)))
+        (if (kv:_has store k)
+          (loop (cdr xs) (kv:_set acc k (kv:_ref store k)))
+          (loop (cdr xs) acc))))))
+
+; (kv:omit store keys) -> new store with the listed keys removed.
+; Preserves insertion order of the survivors. Missing keys are a no-op.
+(define (kv:omit store keys)
+  (let loop ((xs keys) (st store))
+    (if (null? xs)
+      st
+      (loop (cdr xs) (kv:_del st (car xs) (quote ()))))))
+
+; (kv:map-values store proc) -> new store with (proc v) applied to each
+; value. Keys and insertion order are preserved.
+(define (kv:map-values store proc)
+  (kv:_fold store (quote ())
+    (lambda (k v acc) (kv:_set acc k (proc v)))))
