@@ -24,6 +24,10 @@
 #   UNIFY_FIBER_WAVES     sustained multi-wave fanout rounds (default 4)
 #   UNIFY_FIBER_BATCH     live concurrent thread cap per fanout (default 16; 0=unlimited)
 #   UNIFY_LOAD_SIM        1 = standalone load-sim each cycle (default 1)
+#   UNIFY_SQUEEZE         1 = local parallel policy grid + CPU burn (default 1)
+#   UNIFY_SQUEEZE_JOBS    parallel aura workers (default nproc capped 10)
+#   UNIFY_LLM_EVERY       run LLM project-evolve every N cycles (default 3);
+#                         skipped when squeeze just improved policy
 #   UNIFY_DURABLE_EVOLVE  1 = also run function-axis explore (default 0)
 #   UNIFY_GIT_COMMIT      1 = commit on success (default 1)
 #   UNIFY_GIT_PUSH         1 = git push after commit (default 1)
@@ -67,8 +71,17 @@ export UNIFY_FIBER_KEYS="${UNIFY_FIBER_KEYS:-128}"
 export UNIFY_FIBER_WAVES="${UNIFY_FIBER_WAVES:-4}"
 export UNIFY_FIBER_BATCH="${UNIFY_FIBER_BATCH:-16}"
 export UNIFY_LOAD_SIM="${UNIFY_LOAD_SIM:-1}"
+export UNIFY_SQUEEZE="${UNIFY_SQUEEZE:-1}"
+export UNIFY_SQUEEZE_JOBS="${UNIFY_SQUEEZE_JOBS:-0}"
+export UNIFY_LLM_EVERY="${UNIFY_LLM_EVERY:-3}"
+export UNIFY_LOAD_KEYS="${UNIFY_LOAD_KEYS:-64}"
+export UNIFY_LOAD_OPS="${UNIFY_LOAD_OPS:-256}"
 export AURA_BIN="${AURA_BIN:-$ROOT/../aura-grok/build/aura}"
 export AURA_SANDBOX="${AURA_SANDBOX:-off}"
+# tighter sleep when squeezing (CPU-bound loop)
+if [[ "${UNIFY_SQUEEZE}" == "1" && "${UNIFY_SLEEP_SEC:-}" == "" ]]; then
+  SLEEP_SEC="${SLEEP_SEC:-15}"
+fi
 
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 RUN_DIR="$LOG_ROOT/$RUN_ID"
@@ -304,7 +317,7 @@ while true; do
   # Standalone load-sim observe (metrics even if project-evolve skipped)
   if [[ "${UNIFY_LOAD_SIM:-1}" == "1" && -f "${UNIFY_PROJECT}/tests/load-sim.aura" ]]; then
     if run_step "load-sim" \
-      "AURA_PATH=${ROOT}/${UNIFY_PROJECT}/lib:${ROOT}/../aura-grok/lib:${ROOT}/lib ${AURA_BIN} < ${ROOT}/${UNIFY_PROJECT}/tests/load-sim.aura" \
+      "AURA_PATH=${ROOT}/${UNIFY_PROJECT}/lib:${ROOT}/../aura-grok/lib:${ROOT}/lib UNIFY_LOAD_KEYS=${UNIFY_LOAD_KEYS} UNIFY_LOAD_OPS=${UNIFY_LOAD_OPS} ${AURA_BIN} < ${ROOT}/${UNIFY_PROJECT}/tests/load-sim.aura" \
       "RESULT pass project=kv-load" \
       "$cdir/load-sim.log"; then
       c_ok=$((c_ok + 1))
@@ -312,25 +325,61 @@ while true; do
         log "load_score=$(grep -oE 'LOAD_SCORE_TOTAL [-0-9.]+' "$cdir/load-sim.log" | tail -n1 | awk '{print $2}')"
       fi
     else
-      log "WARN load-sim soft-fail (project-evolve still runs)"
+      log "WARN load-sim soft-fail (continue)"
       c_fail=$((c_fail + 1))
     fi
   fi
 
-  # Project-level evolve: infinite load-adaptive plant + LLM controller
+  # Local CPU squeeze: parallel policy grid + heavy burn (NO LLM)
+  squeeze_gain=0
+  if [[ "${UNIFY_SQUEEZE}" == "1" ]]; then
+    if run_step "squeeze" \
+      "./scripts/kv-squeeze.sh" \
+      "RESULT pass squeeze" \
+      "$cdir/squeeze.log"; then
+      c_ok=$((c_ok + 1))
+      if grep -q 'improved=1' "$cdir/squeeze.log"; then
+        squeeze_gain=1
+        log "squeeze GAIN — local policy win (LLM may skip)"
+      fi
+      if git log -1 --oneline 2>/dev/null | grep -qE 'squeeze policy'; then
+        log "git tip: $(git log -1 --oneline)"
+      fi
+    else
+      log "WARN squeeze soft-fail"
+      c_fail=$((c_fail + 1))
+    fi
+  else
+    log "skip squeeze (UNIFY_SQUEEZE=0)"
+  fi
+
+  # LLM project-evolve: every UNIFY_LLM_EVERY cycles, or always if no squeeze gain
+  run_llm=0
   if [[ "${UNIFY_PROJECT_EVOLVE}" == "1" ]]; then
+    if [[ "$squeeze_gain" -eq 1 ]]; then
+      log "skip LLM this cycle (squeeze already improved)"
+      run_llm=0
+    elif [[ "$((cycle % UNIFY_LLM_EVERY))" -eq 0 || "$cycle" -eq 1 ]]; then
+      run_llm=1
+    else
+      log "skip LLM (cycle $cycle mod UNIFY_LLM_EVERY=$UNIFY_LLM_EVERY != 0)"
+      run_llm=0
+    fi
+  fi
+
+  if [[ "$run_llm" -eq 1 ]]; then
     if run_step "project-evolve" \
       "./scripts/project-evolve.sh ${UNIFY_PROJECT}" \
       "RESULT pass project-evolve" \
       "$cdir/project-evolve.log"; then
       c_ok=$((c_ok + 1))
-      if git log -1 --oneline 2>/dev/null | grep -qE 'project\(|explore:'; then
+      if git log -1 --oneline 2>/dev/null | grep -qE 'project\(|explore:|squeeze'; then
         log "git tip: $(git log -1 --oneline)"
       fi
     else
       c_fail=$((c_fail + 1))
     fi
-  else
+  elif [[ "${UNIFY_PROJECT_EVOLVE}" != "1" ]]; then
     log "skip project-evolve (UNIFY_PROJECT_EVOLVE=0)"
   fi
 

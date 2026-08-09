@@ -41,9 +41,20 @@ Also each `run-continuous` cycle:
 | offline / live denseness | four-span smoke |
 | git-probe | unify repo health |
 | fiber-stress | high-concurrency fiber denseness |
-| load-sim (via project-evolve) | adaptive KV fitness |
-| project-evolve | LLM control + accept |
-| sibling denseness (optional) | heph concurrent examples under fiber-stress |
+| load-sim | adaptive KV fitness (default policy) |
+| **squeeze** | **parallel local policy grid + multi-worker CPU burn (no LLM)** |
+| project-evolve | LLM every `UNIFY_LLM_EVERY` cycles; **skipped** if squeeze just gained |
+
+### Squeeze (local, CPU-bound)
+
+```bash
+./scripts/kv-squeeze.sh   # UNIFY_SQUEEZE_JOBS parallel aura policy-bench
+```
+
+- Grid: mode × cache × thr → `LOAD_SCORE_TOTAL`
+- Burn: N parallel heavy `load-sim`
+- Accept only if verify score ≥ baseline + smoke green
+- Patches `kv:_default-policy` surgically; commits when improved
 
 ## Fitness
 
