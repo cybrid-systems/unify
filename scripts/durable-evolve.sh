@@ -408,8 +408,15 @@ Four-axis spacetime denseness explore; composition verify held.
 EOF
 )" || true
     echo "git: $(git log -1 --oneline)"
-    if [[ "${UNIFY_GIT_PUSH:-0}" == "1" ]]; then
-      git push origin HEAD || true
+    # Default ON: evolve should publish state to origin (set UNIFY_GIT_PUSH=0 to disable)
+    if [[ "${UNIFY_GIT_PUSH:-1}" == "1" ]]; then
+      if git push origin HEAD 2>&1; then
+        echo "git: pushed $(git rev-parse --short HEAD) → origin"
+      else
+        echo "git: push failed (non-fatal; commit kept local)" >&2
+      fi
+    else
+      echo "git: push skipped (UNIFY_GIT_PUSH=0)"
     fi
   fi
 fi

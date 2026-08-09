@@ -18,7 +18,7 @@
 #   UNIFY_SELF_EVOLVE     1 = MiniMax proposal for unify-self bugs (default 0)
 #   UNIFY_DURABLE_EVOLVE  1 = run durable-evolve each cycle (default 1)
 #   UNIFY_GIT_COMMIT      1 = commit notes/evolve-state on success (default 1)
-#   UNIFY_GIT_PUSH        1 = push after commit (default 0)
+#   UNIFY_GIT_PUSH         1 = git push after commit (default 1)
 #   UNIFY_STOP_FILE       path; if exists, exit after current cycle
 #   UNIFY_AURA_REPO       default cybrid-systems/aura
 #
@@ -45,6 +45,7 @@ export UNIFY_SELF_EVOLVE="${UNIFY_SELF_EVOLVE:-0}"
 # Durable evolution (persists subject + optional git commit). Default ON.
 export UNIFY_DURABLE_EVOLVE="${UNIFY_DURABLE_EVOLVE:-1}"
 export UNIFY_GIT_COMMIT="${UNIFY_GIT_COMMIT:-1}"
+export UNIFY_GIT_PUSH="${UNIFY_GIT_PUSH:-1}"
 
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 RUN_DIR="$LOG_ROOT/$RUN_ID"

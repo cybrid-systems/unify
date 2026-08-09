@@ -46,7 +46,8 @@ case "$cmd" in
     export UNIFY_SELF_EVOLVE="${UNIFY_SELF_EVOLVE:-0}"
     export UNIFY_DURABLE_EVOLVE="${UNIFY_DURABLE_EVOLVE:-1}"
     export UNIFY_GIT_COMMIT="${UNIFY_GIT_COMMIT:-1}"
-    echo "unify evolve (fg) LIVE_N=$UNIFY_LIVE_N durable=$UNIFY_DURABLE_EVOLVE git_commit=$UNIFY_GIT_COMMIT"
+    export UNIFY_GIT_PUSH="${UNIFY_GIT_PUSH:-1}"
+    echo "unify evolve (fg) durable=$UNIFY_DURABLE_EVOLVE commit=$UNIFY_GIT_COMMIT push=$UNIFY_GIT_PUSH"
     exec ./scripts/run-continuous.sh
     ;;
   bg|start|"")
@@ -73,15 +74,17 @@ case "$cmd" in
     export UNIFY_SELF_EVOLVE="${UNIFY_SELF_EVOLVE:-0}"
     export UNIFY_DURABLE_EVOLVE="${UNIFY_DURABLE_EVOLVE:-1}"
     export UNIFY_GIT_COMMIT="${UNIFY_GIT_COMMIT:-1}"
+    export UNIFY_GIT_PUSH="${UNIFY_GIT_PUSH:-1}"
     nohup ./scripts/run-continuous.sh >>"$LOG_ROOT/nohup.out" 2>&1 &
     pid=$!
     sleep 1
     echo "evolve running pid=$pid"
-    echo "  durable evolve + git commit: ON (notes/evolve-state/)"
+    echo "  durable evolve + git commit + push: ON"
     echo "  status:  $0 status"
     echo "  logs:    tail -f logs/runs/latest/master.log"
     echo "  state:   cat notes/evolve-state/state.json"
     echo "  stop:    $0 stop"
+    echo "  disable push: UNIFY_GIT_PUSH=0 $0"
     ./scripts/status.sh 2>/dev/null | head -n 12 || true
     ;;
   *)
