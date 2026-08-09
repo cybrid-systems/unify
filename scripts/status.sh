@@ -205,6 +205,15 @@ else:
     print("  (none in recent events)")
 
 # ── Tips ────────────────────────────────────────────────────────────────
+# LLM cadence (from running loop env if available)
+print()
+print("LLM controller")
+print("──────────────")
+print("  when     1 MiniMax call per project-evolve generation (after tests)")
+print("  cadence  ~ every cycle (live + git-probe + project-evolve + sleep 45s)")
+print("  timeout  UNIFY_LLM_TIMEOUT (default 480s) × UNIFY_LLM_RETRIES (default 3)")
+print("  note     timeout → soft-reject, next cycle retries (not a host bug)")
+
 print()
 print("Commands")
 print("────────")

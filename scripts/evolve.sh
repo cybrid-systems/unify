@@ -76,6 +76,10 @@ case "$cmd" in
     export UNIFY_SELF_EVOLVE="${UNIFY_SELF_EVOLVE:-0}"
     export UNIFY_PROJECT_EVOLVE="${UNIFY_PROJECT_EVOLVE:-1}"
     export UNIFY_PROJECT="${UNIFY_PROJECT:-projects/kv}"
+    # LLM: once per cycle on project-evolve; long timeout + retries (code grows)
+    export UNIFY_LLM_TIMEOUT="${UNIFY_LLM_TIMEOUT:-480}"
+    export UNIFY_LLM_RETRIES="${UNIFY_LLM_RETRIES:-3}"
+    export UNIFY_LLM_SRC_CHARS="${UNIFY_LLM_SRC_CHARS:-24000}"
     export UNIFY_DURABLE_EVOLVE="${UNIFY_DURABLE_EVOLVE:-0}"
     export UNIFY_GIT_COMMIT="${UNIFY_GIT_COMMIT:-1}"
     export UNIFY_GIT_PUSH="${UNIFY_GIT_PUSH:-1}"
@@ -84,6 +88,7 @@ case "$cmd" in
     sleep 1
     echo "evolve running pid=$pid"
     echo "  project-level: $UNIFY_PROJECT (SPEC+tests+LLM patch+commit+push)"
+    echo "  LLM: 1 call/generation, timeout=${UNIFY_LLM_TIMEOUT}s x${UNIFY_LLM_RETRIES} retries"
     echo "  status:  $0 status"
     echo "  logs:    tail -f logs/runs/latest/master.log"
     echo "  kv tests: AURA_PATH=projects/kv/lib:lib ./scripts/run-aura.sh projects/kv/tests/smoke.aura"

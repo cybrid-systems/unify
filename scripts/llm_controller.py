@@ -31,9 +31,12 @@ def load_key() -> str:
 
 
 def chat(system: str, user: str, temperature: float = 0.35) -> str:
+    """Call MiniMax with long timeout + retries (codebases grow → slow generations)."""
     key = load_key()
     base = os.environ.get("LLM_BASE_URL", "https://api.minimaxi.com/v1").rstrip("/")
     model = os.environ.get("LLM_MODEL", "MiniMax-M3")
+    timeout = int(os.environ.get("UNIFY_LLM_TIMEOUT", "480"))  # seconds
+    retries = int(os.environ.get("UNIFY_LLM_RETRIES", "3"))
     payload = {
         "model": model,
         "temperature": temperature,
@@ -42,14 +45,51 @@ def chat(system: str, user: str, temperature: float = 0.35) -> str:
             {"role": "user", "content": user},
         ],
     }
-    req = urllib.request.Request(
-        f"{base}/chat/completions",
-        data=json.dumps(payload).encode(),
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-        method="POST",
+    data = json.dumps(payload).encode()
+    last_err: Exception | None = None
+    for attempt in range(1, retries + 1):
+        req = urllib.request.Request(
+            f"{base}/chat/completions",
+            data=data,
+            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            print(
+                f"controller: LLM request attempt {attempt}/{retries} "
+                f"timeout={timeout}s model={model} user_chars={len(user)}",
+                flush=True,
+            )
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                content = json.load(resp)["choices"][0]["message"]["content"]
+            print(f"controller: LLM ok attempt={attempt} reply_chars={len(content)}", flush=True)
+            return content
+        except Exception as e:
+            last_err = e
+            wait = min(60, 10 * attempt)
+            print(
+                f"controller: LLM error attempt={attempt}/{retries}: {type(e).__name__}: {e}",
+                flush=True,
+            )
+            if attempt < retries:
+                print(f"controller: backoff {wait}s then retry", flush=True)
+                import time
+
+                time.sleep(wait)
+    raise SystemExit(f"LLM controller failed after {retries} attempts: {last_err}")
+
+
+def clip_source(path: str, body: str, max_chars: int) -> str:
+    """Keep prompt bounded so API stays under timeout as project grows."""
+    if len(body) <= max_chars:
+        return body
+    head = max_chars // 2
+    tail = max_chars - head - 80
+    return (
+        body[:head]
+        + f"\n\n/* … truncated {len(body) - max_chars} chars from {path} … */\n\n"
+        + body[-tail:]
     )
-    with urllib.request.urlopen(req, timeout=180) as resp:
-        return json.load(resp)["choices"][0]["message"]["content"]
 
 
 SYSTEM = """You are the *controller* of a continuous software self-evolution loop.

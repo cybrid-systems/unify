@@ -91,6 +91,9 @@ source ./scripts/env-minimax.sh
 GEN="$(python3 -c 'import json;print(json.load(open("'"$STATE"'")).get("generation",0))')"
 
 echo "======== [2/5] CONTROL (LLM review + direction + patch) ========"
+echo "[control] frequency: 1 MiniMax call per project-evolve generation (after observe)"
+echo "[control] timeout=${UNIFY_LLM_TIMEOUT:-480}s retries=${UNIFY_LLM_RETRIES:-3}"
+set +e
 python3 "$ROOT/scripts/llm_controller.py" \
   --project "$PROJ" \
   --gen "$GEN" \
@@ -103,6 +106,36 @@ python3 "$ROOT/scripts/llm_controller.py" \
   --source tests/smoke.aura \
   --out-json "$LAST_CTRL" \
   --out-patch "$LAST_PATCH"
+ctrl_rc=$?
+set -e
+if [[ "$ctrl_rc" -ne 0 ]]; then
+  echo "[control] LLM failed (timeout/network) — soft-reject this generation; next cycle retries"
+  python3 - "$STATE" "$JOURNAL" "$BASE_SCORE" "$BASE_TOTAL" <<'PY'
+import json, sys
+from datetime import datetime, timezone
+path, journal, bs, bt = sys.argv[1:5]
+st = json.load(open(path))
+now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
+row = {
+    "ts": now,
+    "phase": "control-loop",
+    "generation": int(st.get("generation") or 0),
+    "accepted": False,
+    "reason": "llm-timeout-or-error",
+    "baseline": f"{bs}/{bt}",
+    "candidate": f"{bs}/{bt}",
+}
+st.setdefault("history", []).append(row)
+st["history"] = st["history"][-100:]
+st["status"] = "llm-retry"
+st["updated"] = now
+json.dump(st, open(path, "w"), indent=2)
+open(journal, "a").write(json.dumps(row, ensure_ascii=False) + "\n")
+print("memory: llm-retry recorded")
+PY
+  echo "RESULT pass project-evolve soft-reject reason=llm-timeout score=$BASE_SCORE/$BASE_TOTAL"
+  exit 0
+fi
 
 python3 - "$LAST_CTRL" "$LAST_REVIEW" <<'PY'
 import json, sys

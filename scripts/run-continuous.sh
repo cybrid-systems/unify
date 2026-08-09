@@ -51,6 +51,10 @@ export UNIFY_PROJECT="${UNIFY_PROJECT:-projects/kv}"
 export UNIFY_DURABLE_EVOLVE="${UNIFY_DURABLE_EVOLVE:-0}"
 export UNIFY_GIT_COMMIT="${UNIFY_GIT_COMMIT:-1}"
 export UNIFY_GIT_PUSH="${UNIFY_GIT_PUSH:-1}"
+# MiniMax controller: long timeout as project sources grow
+export UNIFY_LLM_TIMEOUT="${UNIFY_LLM_TIMEOUT:-480}"
+export UNIFY_LLM_RETRIES="${UNIFY_LLM_RETRIES:-3}"
+export UNIFY_LLM_SRC_CHARS="${UNIFY_LLM_SRC_CHARS:-24000}"
 
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 RUN_DIR="$LOG_ROOT/$RUN_ID"
