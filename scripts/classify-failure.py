@@ -238,24 +238,57 @@ def _result(
     }
 
 
+def normalize_diag_line(ln: str) -> str:
+    s = ln
+    s = re.sub(r"/home/\S+", "<PATH>", s)
+    s = re.sub(r"/tmp/\S+", "<TMP>", s)
+    s = re.sub(r"\b[0-9a-f]{7,40}\b", "<SHA>", s)
+    s = re.sub(r"\bcycle\s*\d+", "cycle N", s, flags=re.I)
+    s = re.sub(r"\berror:\s*\d+:\d+:", "error:L:C:", s, flags=re.I)
+    # drop ephemeral identifier names after unbound variable: keep pattern only
+    s = re.sub(
+        r"unbound variable:\s*\S+",
+        "unbound variable: <NAME>",
+        s,
+        flags=re.I,
+    )
+    s = re.sub(r"\b\d{4,}\b", "N", s)
+    s = re.sub(r"\s+", " ", s).strip().lower()
+    return s
+
+
+def primary_diag(error_lines: list[str], kind: str) -> str:
+    """Single stable diagnostic line used for titles and dedupe."""
+    head = pick_title_head(error_lines, kind)
+    return normalize_diag_line(head)
+
+
 def stable_fingerprint(kind: str, error_lines: list[str], label: str) -> str:
+    """Legacy fingerprint (content hash). Prefer dedupe_key for GitHub search."""
     del label
-    blob_parts = [kind]
-    for ln in error_lines[:12]:
-        s = ln
-        s = re.sub(r"/home/\S+", "<PATH>", s)
-        s = re.sub(r"/tmp/\S+", "<TMP>", s)
-        s = re.sub(r"\b[0-9a-f]{7,40}\b", "<SHA>", s)
-        s = re.sub(r"\bcycle\s*\d+", "cycle N", s, flags=re.I)
-        s = re.sub(r"\b\d{4,}\b", "N", s)
-        s = re.sub(r"\s+", " ", s).strip().lower()
-        if s.startswith("===") or s.startswith("---"):
+    blob_parts = [kind, primary_diag(error_lines, kind)]
+    for ln in error_lines[:8]:
+        s = normalize_diag_line(ln)
+        if s.startswith("===") or s.startswith("---") or not s:
             continue
         blob_parts.append(s)
     blob = "|".join(blob_parts)
     digest = hashlib.sha256(blob.encode("utf-8", errors="replace")).hexdigest()[:12]
     kind_slug = re.sub(r"[^a-z0-9]+", "-", (kind or "unknown").lower()).strip("-") or "unknown"
     return f"unify-{kind_slug}-{digest}"
+
+
+def dedupe_key(kind: str, error_lines: list[str]) -> str:
+    """Canonical dedupe key stable across fingerprint algorithm tweaks.
+
+    Format: unify-host/<kind>/<normalized-primary-diag-hash>
+    Embedded in issue body as `dedupe-key: ...` for GitHub search.
+    """
+    diag = primary_diag(error_lines, kind)
+    kind_slug = re.sub(r"[^a-z0-9]+", "-", (kind or "unknown").lower()).strip("-") or "unknown"
+    # short hash of kind+diag so names stay short and searchable prefix is stable
+    h = hashlib.sha256(f"{kind_slug}|{diag}".encode()).hexdigest()[:10]
+    return f"unify-host/{kind_slug}/{h}"
 
 
 def pick_title_head(error_lines: list[str], kind: str) -> str:
@@ -280,12 +313,85 @@ def pick_title_head(error_lines: list[str], kind: str) -> str:
 
 
 def title_for(kind: str, class_: str, label: str, error_lines: list[str], confidence: str) -> str:
-    head = pick_title_head(error_lines, kind)
-    if len(head) > 72:
-        head = head[:69] + "..."
+    """Short, agent-scannable title. Avoid raw log banners."""
+    del label, confidence
     if class_ == "host":
-        return f"[Unify/host:{kind}/{confidence}] {head}"
-    return f"[Unify/{class_}:{kind}] {label}: {head}"
+        # Prefer kind-level title so duplicates look the same in search
+        templates = {
+            "unbound": "set-code/eval: top-level or module binding becomes unbound",
+            "segfault": "Aura process SIGSEGV during Unify synthesis",
+            "type_error_call": "type error: cannot call after install/set-code",
+            "eval_flat": "eval_flat residual under mutation/install",
+            "recursion": "recursion depth exceeded in Aura runtime",
+            "internal": "Aura internal error / panic under Unify load",
+        }
+        base = templates.get(kind, pick_title_head(error_lines, kind))
+        if len(base) > 80:
+            base = base[:77] + "..."
+        return f"[Unify→Aura][{kind}] {base}"
+    head = pick_title_head(error_lines, kind)
+    if len(head) > 60:
+        head = head[:57] + "..."
+    return f"[Unify/{class_}:{kind}] {head}"
+
+
+def problem_blurb(kind: str, class_: str, error_lines: list[str]) -> tuple[str, str, str]:
+    """Return (what, why_aura, agent_todo) in plain language for other agents."""
+    diag = pick_title_head(error_lines, kind)
+    if class_ != "host":
+        return (
+            f"Unify classified this as `{class_}` / `{kind}`.",
+            "Not filed as an Aura engine bug under current 定界 policy.",
+            "Do not fix in aura unless reclassified to confirmed host.",
+        )
+    blurbs = {
+        "unbound": (
+            "After `(set-code …)` / `(eval-current)` (or multi-module composition), "
+            "a name that should be bound is reported `unbound variable` by the Aura "
+            "evaluator. Unify hits this when installing subjects or when driver "
+            "top-level `define`s disappear mid-script.",
+            "The diagnostic is emitted by Aura's evaluator (line/col + optional "
+            "`did you mean`), not by Unify's denseness verify path. Binding lifetime "
+            "across `set-code` is host/runtime semantics.",
+            "Reproduce with the minimal script below. Check whether `set-code` wipes "
+            "the top-level env, whether module frames fail to see newly installed "
+            "defs, and whether multi-define forms only bind a subset of names.",
+        ),
+        "segfault": (
+            "The Aura process received SIGSEGV while running a Unify probe.",
+            "Process crash is always a host residual, not a denseness score miss.",
+            "Capture core/stack if available; re-run the exact repro command under AURA_SANDBOX=off.",
+        ),
+        "type_error_call": (
+            "Aura reports `type error: cannot call` for a name that was expected to be a procedure.",
+            "Usually a binding was not installed as a callable after rebind/install, or was wiped.",
+            "Compare pre/post `set-code` env; confirm install/eval-current succeeded before the call.",
+        ),
+        "eval_flat": (
+            "An `eval_flat` related failure appeared under install/mutate.",
+            "eval_flat is part of Aura's evaluation pipeline (known residual class in span notes).",
+            "Minimal rebind/install loop that triggers eval_flat; attach pipeline flags if any.",
+        ),
+        "recursion": (
+            "Aura hit recursion depth exceeded during Unify execution.",
+            "Engine stack limit / runaway eval is host-side.",
+            "Find the recursive primitive or mutual re-entry (stdlib wrapper vs prim is a common theme).",
+        ),
+        "internal": (
+            "Aura reported internal error / panic / assertion failure.",
+            "Internal errors are engine bugs by definition.",
+            "Preserve full stderr; bisect the last mutate/install before the panic.",
+        ),
+    }
+    what, why, todo = blurbs.get(
+        kind,
+        (
+            f"Host-class failure kind=`{kind}`: {diag}",
+            "Classifier marked this as confirmed Aura host residual.",
+            "Use the repro and log excerpt; fix in aura if the engine is at fault.",
+        ),
+    )
+    return what, why, todo
 
 
 def build_body(
@@ -299,6 +405,7 @@ def build_body(
     reasons: list[str],
     label: str,
     fingerprint: str,
+    dedupe: str,
     cmd: str,
     log_path: str,
     error_lines: list[str],
@@ -309,41 +416,86 @@ def build_body(
     err_block = "\n".join(error_lines) if error_lines else "(no error lines extracted)"
     notes = extra_notes.strip() or "_None_"
     reasons_md = "\n".join(f"- {r}" for r in reasons) or "- (none)"
-    boundary = (
-        "**CONFIRMED Aura host residual** — eligible for cybrid-systems/aura."
-        if should_file
-        else (
-            "**Unify-owned** — fix via self-evolve / local patch; do **not** file to Aura."
-            if should_self_evolve
-            else (
-                "**Not confirmed as Aura bug** — draft only; human 定界 before any Aura issue."
-                if class_ == "host"
-                else f"**Action `{action}`** — not an Aura tracker item."
-            )
-        )
+    what, why_aura, agent_todo = problem_blurb(kind, class_, error_lines)
+    diag = pick_title_head(error_lines, kind)
+    # Machine markers for search/dedupe (keep stable tokens)
+    markers = (
+        f"<!-- unify-issue-markers\n"
+        f"dedupe-key: {dedupe}\n"
+        f"fingerprint: {fingerprint}\n"
+        f"kind: {kind}\n"
+        f"class: {class_}\n"
+        f"confidence: {confidence}\n"
+        f"-->\n"
+        f"\n"
+        f"`dedupe-key: {dedupe}`\n"
+        f"`fingerprint: {fingerprint}`\n"
     )
-    return f"""## Summary
+    return f"""{markers}
 
-Unify synthesis bed failure during step `{label}`.
+## For agents (read this first)
 
-{boundary}
+| | |
+|--|--|
+| **What broke** | {what} |
+| **Why this is (or is not) an Aura bug** | {why_aura} |
+| **What you should do** | {agent_todo} |
+| **Primary diagnostic** | `{diag}` |
+| **Dedupe key** | `{dedupe}` — **if an open issue already has this key, do not open another** |
 
-| Field | Value |
-|-------|-------|
-| class | `{class_}` |
-| kind | `{kind}` |
-| confidence | `{confidence}` |
-| action | `{action}` |
-| should_file (Aura) | `{should_file}` |
-| should_self_evolve | `{should_self_evolve}` |
-| fingerprint | `{fingerprint}` |
-| unify HEAD | `{env.get('git_head', '')}` @ `{env.get('git_branch', '')}` |
-| date (UTC) | `{env.get('date_utc', '')}` |
-| host | `{env.get('hostname', '')}` |
+### Not this
 
-### 定界 reasons
+- Not a denseness / closed-form verify miss (`verify-fail` / rollback).
+- Not an LLM/network failure.
+- Not a Unify harness misconfig (those go to Unify self-evolve, never here).
+
+---
+
+## Problem statement
+
+Unify ([cybrid-systems/unify](https://github.com/cybrid-systems/unify)) is a
+composition / self-evolution bed over four denseness spans on one Aura process.
+It only files **confirmed host residuals** to this repo.
+
+**Observed:** during step `{label}`, Aura reported a **`{kind}`** failure
+(confidence=`{confidence}`).
+
+**定界 reasons:**
 
 {reasons_md}
+
+## Minimal reproduction
+
+```bash
+# Layout: sibling checkouts aether, hephaestus, prometheus, hermes, aura-grok
+cd {env.get('unify_root', 'unify')}
+export AURA_SANDBOX=off
+{cmd or '# fill in the failing command from continuous runner'}
+```
+
+Optional: inspect the same log that triggered this filing:
+
+- local log: `{log_path}`
+- unify HEAD: `{env.get('git_head', '')}` on branch `{env.get('git_branch', '')}`
+
+## Expected vs actual
+
+| | |
+|--|--|
+| **Expected** | Command exits 0 and prints `RESULT pass …` with no Aura evaluator fatal diagnostics. |
+| **Actual** | Primary diagnostic: `{diag}` |
+
+### Extracted diagnostics
+
+```
+{err_block}
+```
+
+### Log tail (truncated)
+
+```
+{log_tail.rstrip() or '(empty)'}
+```
 
 ## Environment
 
@@ -351,43 +503,23 @@ Unify synthesis bed failure during step `{label}`.
 |-------|-------|
 | AURA_BIN | `{env.get('aura_bin', '')}` |
 | AURA_PATH | `{env.get('aura_path', '') or '(default via run-aura.sh)'}` |
-| LLM_MODEL | `{env.get('llm_model', '')}` |
-| LLM_BASE_URL | `{env.get('llm_base', '')}` |
-| UNIFY_LIVE | `{env.get('unify_live', '')}` |
-| unify root | `{env.get('unify_root', '')}` |
+| LLM_MODEL | `{env.get('llm_model', '') or '(n/a)'}` |
+| UNIFY_LIVE | `{env.get('unify_live', '') or '(n/a)'}` |
+| host | `{env.get('hostname', '')}` |
+| date (UTC) | `{env.get('date_utc', '')}` |
 
-## Repro
+## Context for Aura maintainers
 
-```bash
-cd {env.get('unify_root', 'unify')}
-export AURA_SANDBOX=off
-{cmd or '# (command not recorded — see log path)'}
-```
+- Source bed: Unify continuous / offline synthesis (`scripts/start.sh`).
+- Filing gate: `should_file={should_file}` (`class=host` + `confidence=high` only).
+- Related local notes: `unify/notes/host-residuals.md` (fingerprint family `{kind}`).
 
-Log path (local): `{log_path}`
-
-## Expected
-
-Step completes with `RESULT pass`. Host-class engine crashes are Aura; harness/schema/compose mistakes are Unify-self.
-
-## Actual
-
-```
-{err_block}
-```
-
-## Log tail
-
-```
-{log_tail.rstrip() or '(empty)'}
-```
-
-## Notes
+## Extra notes
 
 {notes}
 
 ---
-*Boundary policy: only `should_file=true` (host + confidence=high) may be created on cybrid-systems/aura.*
+*Auto-filed by Unify. Dedupe via `dedupe-key` + GitHub search; please close duplicates as Duplicate of the first issue.*
 """
 
 
@@ -419,6 +551,7 @@ def main() -> int:
 
     error_lines = extract_error_lines(text)
     fp = stable_fingerprint(kind, error_lines, args.label)
+    dkey = dedupe_key(kind, error_lines)
     title = title_for(kind, class_, args.label, error_lines, confidence)
     tail = "\n".join(text.splitlines()[-args.tail_lines :])
     env = env_snapshot(root)
@@ -432,6 +565,7 @@ def main() -> int:
         reasons=reasons,
         label=args.label,
         fingerprint=fp,
+        dedupe=dkey,
         cmd=args.cmd,
         log_path=str(log_path.resolve()),
         error_lines=error_lines,
@@ -450,12 +584,14 @@ def main() -> int:
         "should_self_evolve": should_self_evolve,
         "reasons": reasons,
         "fingerprint": fp,
+        "dedupe_key": dkey,
         "title": title,
         "error_lines": error_lines,
         "body": body,
         "env": env,
         "log": str(log_path.resolve()),
         "label": args.label,
+        "primary_diag": pick_title_head(error_lines, kind),
     }
     json.dump(out, sys.stdout, ensure_ascii=False, indent=2)
     sys.stdout.write("\n")
