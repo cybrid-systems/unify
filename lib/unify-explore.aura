@@ -1,0 +1,162 @@
+; lib/unify-explore.aura — spacetime denseness explore (four-span composition subject)
+;
+; Four pure bindings live in one workspace — each maps to a span denseness edge:
+;   score  — Aether: free pure decision metric (explore arithmetic forms)
+;   kernel — Hephaestus: closed-form triangle numbers (compute denseness)
+;   leaf   — Prometheus: small pure transform (scale/mutation surface)
+;   hop    — Hermes: ring next-hop (topology pure core)
+;
+; Each evolve step mutates ONE axis under snapshot multi-cand select;
+; after apply, ALL axes must still verify (composition pressure).
+; Failures near the edge go to frontier (denseness vs host class).
+;
+; Form order: export before require.
+
+(export unify:explore-version
+        unify:explore-install!
+        unify:explore-verify-all
+        unify:explore-verify-axis
+        unify:explore-sandbox-axis!
+        unify:explore-select-axis!
+        unify:explore-axis-names)
+
+(require "std/string" all:)
+(require "unify-measure" all:)
+(require "unify-loop" all:)
+
+(define unify:explore-version 1)
+
+(define (unify:explore-axis-names)
+  (list "score" "kernel" "leaf" "hop"))
+
+; ── Oracles (pure denseness; no host I/O) ─────────────────────────────────
+
+; Aether score: free pure forms allowed if:
+;   score(0)=0, uses x productively, samples finite, not constant on {1,2,3}
+(define (unify:explore-verify-score)
+  (try
+    (let ((a (score 0))
+          (b (score 1))
+          (c (score 2))
+          (d (score 3))
+          (e (score 7)))
+      (and (number? a) (number? b) (number? c) (number? d) (number? e)
+           (= a 0)
+           (not (and (= b c) (= c d)))
+           ; mild regularity: defined & finite path (already numbers)
+           #t))
+    (catch (e) #f)))
+
+; Hephaestus kernel: triangle T(n)=n(n-1)/2 for n>=0
+(define (unify:explore-verify-kernel)
+  (try
+    (and (= (kernel 0) 0)
+         (= (kernel 1) 0)
+         (= (kernel 5) 10)
+         (= (kernel 10) 45)
+         (= (kernel 11) 55))
+    (catch (e) #f)))
+
+; Prometheus leaf: must stay a pure scaling-ish form: leaf(0)=0, leaf(3) and leaf(6)=2*leaf(3)
+(define (unify:explore-verify-leaf)
+  (try
+    (let ((z (leaf 0))
+          (a (leaf 3))
+          (b (leaf 6)))
+      (and (number? z) (number? a) (number? b)
+           (= z 0)
+           (= b (* 2 a))
+           (not (= a 0))))
+    (catch (e) #f)))
+
+; Hermes hop: ring on {0,1,2}
+(define (unify:explore-verify-hop)
+  (try
+    (and (= (hop 0) 1)
+         (= (hop 1) 2)
+         (= (hop 2) 0))
+    (catch (e) #f)))
+
+(define (unify:explore-verify-axis axis)
+  (cond ((equal? axis "score") (unify:explore-verify-score))
+        ((equal? axis "kernel") (unify:explore-verify-kernel))
+        ((equal? axis "leaf") (unify:explore-verify-leaf))
+        ((equal? axis "hop") (unify:explore-verify-hop))
+        (else #f)))
+
+(define (unify:explore-verify-all)
+  (and (unify:explore-verify-score)
+       (unify:explore-verify-kernel)
+       (unify:explore-verify-leaf)
+       (unify:explore-verify-hop)))
+
+; Install full four-axis workspace from body strings.
+(define (unify:explore-install! score-b kernel-b leaf-b hop-b)
+  (let ((src
+          (string-append
+            "(define score " score-b ")"
+            "(define kernel " kernel-b ")"
+            "(define leaf " leaf-b ")"
+            "(define hop " hop-b ")")))
+    (unify:install-subject src)))
+
+; Sandbox try rebind one axis; restore always. fitness 1000 if all-verify else -1/partial.
+(define (unify:explore-sandbox-axis! axis body)
+  (let ((sid
+          (try
+            (let ((id (ast:snapshot "explore-cand")))
+              (if (number? id) id -1))
+            (catch (e) -1))))
+    (let ((mut (try (mutate:rebind axis body "explore-cand") (catch (e) #f))))
+      (try (eval-current) (catch (e) #f))
+      (let ((fit
+              (if (not (eq? mut #t))
+                -2
+                (if (unify:explore-verify-all)
+                  1000
+                  (if (unify:explore-verify-axis axis)
+                    100
+                    -1)))))
+        (if (and (number? sid) (>= sid 0))
+          (begin
+            (try (ast:restore sid) (catch (e) #f))
+            (try (eval-current) (catch (e) #f)))
+          #f)
+        fit))))
+
+; Multi-cand select on one axis; winner applied only if composition still holds.
+(define (unify:explore-select-axis! axis candidates)
+  (unify:stats-bump! "cand_rounds")
+  (if (not (pair? candidates))
+    (list (cons ":ok" #f) (cons ":reason" "no-cands"))
+    (let loop ((ys candidates) (best-body "") (best-fit -999) (n 0))
+      (if (null? ys)
+        (if (or (< best-fit 1000) (equal? best-body ""))
+          (list (cons ":ok" #f)
+                (cons ":reason" "no-viable-composition")
+                (cons ":tried" n)
+                (cons ":fitness" best-fit)
+                (cons ":best_body" best-body))
+          (let ((rb (unify:rebind-safe axis best-body "explore-winner")))
+            (if (and (unify:alist-ref ":ok" rb #f) (unify:explore-verify-all))
+              (begin
+                (unify:stats-bump! "cand_wins")
+                (list (cons ":ok" #t)
+                      (cons ":body" best-body)
+                      (cons ":axis" axis)
+                      (cons ":fitness" best-fit)
+                      (cons ":tried" n)
+                      (cons ":locus" (try (query :find axis) (catch (e) (quote ()))))))
+              (list (cons ":ok" #f)
+                    (cons ":reason" "apply-broke-composition")
+                    (cons ":body" best-body)
+                    (cons ":tried" n)
+                    (cons ":fitness" best-fit)))))
+        (let ((b (car ys)))
+          (if (and (string? b) (> (string-length b) 0))
+            (let ((fit (unify:explore-sandbox-axis! axis b)))
+              (unify:stats-bump! "cand_tried")
+              (if (> fit best-fit)
+                (loop (cdr ys) b fit (+ n 1))
+                (loop (cdr ys) best-body best-fit (+ n 1))))
+            (loop (cdr ys) best-body best-fit n)))))))

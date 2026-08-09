@@ -1,12 +1,23 @@
-# Evolve state (durable subject)
+# Spacetime denseness explore state
 
 | field | value |
 |-------|-------|
-| updated | 2026-08-09T04:31Z |
-| generation | 30 |
-| factor | 61 |
-| body | `(lambda (x) (* x 61))` |
-| decision | select |
-| mode | multi-sandbox-select (query→mutate, K candidates) |
+| mode | spacetime-explore |
+| generation | 4 |
+| last axis | hop (hermes) |
+| winner body | `(lambda (i) (modulo (+ i 1) 3))` |
+| candidates tried | 5/5 |
 
-See `notes/evolution-model.md`. Entry: `./scripts/evolve.sh`.
+## Four axes (composition)
+
+| axis | span | role |
+|------|------|------|
+| score | Aether | free pure decision metric |
+| kernel | Hephaestus | triangle closed form |
+| leaf | Prometheus | homogeneous pure map |
+| hop | Hermes | ring next-hop |
+
+Each generation mutates **one** axis under multi-cand sandbox; **all** must still verify.
+Failed explorations → `frontier.jsonl` (denseness boundary samples).
+
+Readable dump: `subject.aura`. Entry: `./scripts/evolve.sh`.

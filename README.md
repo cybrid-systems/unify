@@ -82,9 +82,10 @@ cat notes/evolve-state/state.json
 ./scripts/run-offline.sh
 ```
 
-Model: **local query→mutate**, multi-candidate under `ast:snapshot`, arbiter keeps
-one winner (see `notes/evolution-model.md`).  
-`examples/02-live-evolve` = in-memory denseness smoke only (no file / no git).
+Model: **spacetime denseness explore** — four axes (`score`/`kernel`/`leaf`/`hop`)
+map to Aether/Hephaestus/Prometheus/Hermes edges; each gen mutates one under
+multi-cand snapshot select; composition must stay green (see `notes/evolution-model.md`).  
+`examples/02-live-evolve` = in-memory denseness smoke only.
 
 ### Logs (continuous)
 

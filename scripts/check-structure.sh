@@ -30,6 +30,7 @@ required=(
   scripts/evolve.sh
   scripts/durable-evolve.sh
   lib/unify-mutate.aura
+  lib/unify-explore.aura
   notes/evolution-model.md
 )
 

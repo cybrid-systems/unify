@@ -22,12 +22,17 @@
         unify:compose-all! unify:compose-ok?
         unify:mutate-version
         unify:query-name unify:sandbox-try!
-        unify:select-candidate! unify:verify-factor unify:apply-body!)
+        unify:select-candidate! unify:verify-factor unify:apply-body!
+        unify:explore-version
+        unify:explore-install! unify:explore-verify-all
+        unify:explore-verify-axis unify:explore-sandbox-axis!
+        unify:explore-select-axis! unify:explore-axis-names)
 
 (require "unify-measure" all:)
 (require "unify-loop" all:)
 (require "unify-mutate" all:)
+(require "unify-explore" all:)
 (require "unify-host" all:)
 (require "unify-compose" all:)
 
-(define unify:min-version 3)
+(define unify:min-version 4)

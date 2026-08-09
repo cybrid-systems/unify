@@ -1,55 +1,44 @@
-# Unify evolution model
+# Unify evolution model — spacetime denseness explore
 
-## Why not `start.sh`
+## Entry
 
-The long-running process is a **self-evolution control loop**, not an app
-server. Entry name: **`scripts/evolve.sh`** (`start.sh` remains a thin alias).
+```bash
+./scripts/evolve.sh          # control loop
+./scripts/durable-evolve.sh  # one explore generation
+```
 
-## Aura surfaces we use
+## Use case (not the old ×K ladder)
+
+**Software spacetime free explore** across four denseness edges in **one** workspace:
+
+| axis | span | denseness edge |
+|------|------|----------------|
+| `score` | Aether | free pure decision metrics (linear / poly / products…) |
+| `kernel` | Hephaestus | closed-form numeric kernel (triangle numbers) |
+| `leaf` | Prometheus | pure homogeneous map (scale surface) |
+| `hop` | Hermes | pure ring routing (topology core) |
+
+Each generation:
+
+1. Pick one axis (round-robin).
+2. Propose **diverse** candidates (catalog + MiniMax free propose + intentional **boundary fails**).
+3. `query :find` locus → multi-cand **snapshot sandbox** → fitness.
+4. Winner applies only if **composition still holds** (all four oracles green).
+5. Persist `state.json` + readable `subject.aura` + `frontier.jsonl` for failed edge samples.
+
+This is **divergent exploration of denseness boundaries**: intentional failing candidates probe where pure-Aura verify rejects vs host residual; composition pressure keeps four spans co-present.
+
+## Aura surfaces
 
 | Primitive | Role |
 |-----------|------|
-| `(query :find "name")` | Locate binding node(s) — **query** half of query→mutate |
-| `(mutate:rebind "name" body summary)` | Local name-level mutation (not whole-file rewrite) |
-| `(mutate:query-and-replace …)` | Pattern-local mutation when predicates known |
-| `(ast:snapshot tag)` / `(ast:restore id)` | **Sandbox** a candidate; roll back losers |
-| `(mutate:boundary-safe?)` / quota | Safety gate before mutate |
-| `(serialize-workspace path)` | Optional full workspace blob (host E) |
+| `(query :find "name")` | local locus |
+| `(mutate:rebind name body …)` | name-local mutation |
+| `(ast:snapshot)` / `(ast:restore)` | candidate sandbox |
+| body strings in `state.json` | source of truth until host `query:code` exists |
 
-**Note:** Docs mention `(query:code)` as “current source”; this Aura build does
-**not** register that prim. Unify therefore **tracks the subject body string**
-we last applied (and can re-`set-code` from state). That is intentional until
-`query:code` / `ast:to-source` is available on the host.
+## What is *not* claimed
 
-## Evolution pattern (not “first LLM wins”)
-
-```text
-load state (body, factor, gen)
-  → install subject (local name `score`)
-  → query locus (query :find "score")
-  → propose K candidates (rule + MiniMax + optional alts)
-  → for each candidate:
-        snap → rebind(name, body) → verify samples → fitness → restore
-  → arbiter: pick best fitness (and verify-pass)
-  → apply winner once
-  → persist body to notes/evolve-state/ + git commit
-```
-
-So:
-
-1. **Mutation is local** — rebind one name / query-replace a locus, not rewrite the repo.
-2. **Sandbox first** — multi-candidate under `ast:snapshot`; losers discarded.
-3. **Select then keep** — only the winner is applied and committed.
-4. **Soak ≠ evolve** — `examples/02-live-evolve` is in-memory denseness smoke only.
-
-## Relation to Aether
-
-Aether’s **researcher → arbiter → executor** (e.g. `11-arbitrated-multi`) is the
-same shape. Unify reuses that discipline for **composition-bed** subjects and
-durable state under `notes/evolve-state/`.
-
-## What gets committed
-
-- `notes/evolve-state/state.json` — generation, factor, **winning body**
-- `journal.jsonl` — candidate outcomes over time
-- **Not** every sandbox attempt; only accepted winners
+- Full four-span *workload* co-mutation every tick (Hephaestus load soak / Hermes TCP still in offline smoke).
+- AST→`.aura` decompile (host gap).
+- Business product logic — this is denseness synthesis exploration.
