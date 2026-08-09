@@ -1,9 +1,9 @@
 {
-  "generation": 3,
-  "factor": 7,
-  "body": "(lambda (x) (* x 7))",
+  "generation": 4,
+  "factor": 9,
+  "body": "(lambda (x) (* x 9))",
   "status": "ok",
-  "updated": "2026-08-09T04:00Z",
+  "updated": "2026-08-09T04:01Z",
   "last_decision": "commit",
   "last_source": "llm",
   "history": [
@@ -31,6 +31,15 @@
       "to_generation": 3,
       "factor": 7,
       "body": "(lambda (x) (* x 7))",
+      "decision": "commit",
+      "source": "llm"
+    },
+    {
+      "ts": "2026-08-09T04:01Z",
+      "from_generation": 3,
+      "to_generation": 4,
+      "factor": 9,
+      "body": "(lambda (x) (* x 9))",
       "decision": "commit",
       "source": "llm"
     }
