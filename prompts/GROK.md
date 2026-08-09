@@ -7,9 +7,9 @@ You assist the **Unify** synthesis bed (Aura Unify).
 Compose Aether + Hephaestus + Prometheus + Hermes denseness surfaces into one
 continuous self-evolution loop. LLM provider is **fixed: MiniMax-M3**.
 
-Entry: **`./scripts/evolve.sh`** (not “start”). Model: query locus → multi-candidate
-sandbox (`ast:snapshot`) → select → local `mutate:rebind` → persist
-(`notes/evolution-model.md`). Do not treat first LLM body as committed truth.
+Entry: **`./scripts/evolve.sh`**. Primary model is **project-level** self-evolution
+(`projects/kv`: SPEC → LLM multi-file patch → tests → commit/push). See
+`notes/evolution-model.md`. Not single-function toys.
 
 ## Discipline
 

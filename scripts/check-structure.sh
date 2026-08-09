@@ -29,9 +29,13 @@ required=(
   scripts/start.sh
   scripts/evolve.sh
   scripts/durable-evolve.sh
+  scripts/project-evolve.sh
   lib/unify-mutate.aura
   lib/unify-explore.aura
   notes/evolution-model.md
+  projects/kv/SPEC.md
+  projects/kv/lib/kv.aura
+  projects/kv/tests/smoke.aura
 )
 
 echo "=== Unify structure check ==="

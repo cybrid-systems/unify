@@ -69,23 +69,20 @@ Override with `AURA_BIN`, `AURA_ROOT`, `AETHER_ROOT`, etc.
 ## Quick start
 
 ```bash
-# 自进化控制环（推荐入口名 evolve，不是 start）
-./scripts/evolve.sh              # 后台：soak + multi-cand durable + git commit
+# 项目级自进化（默认：projects/kv 迷你 KV 库）
+./scripts/evolve.sh                 # 后台：测基线 → LLM 补丁 → 再测 → commit+push
 ./scripts/evolve.sh status
-./scripts/evolve.sh stop
-cat notes/evolve-state/state.json
+./scripts/project-evolve.sh projects/kv   # 只跑一代
 
-# 只跑一轮：query→多候选沙箱→选优→落盘提交
-./scripts/durable-evolve.sh
+# 测 KV
+AURA_PATH=projects/kv/lib:lib ./scripts/run-aura.sh projects/kv/tests/smoke.aura
 
-# Offline smoke
+# Offline 四空间 smoke
 ./scripts/run-offline.sh
 ```
 
-Model: **spacetime denseness explore** — four axes (`score`/`kernel`/`leaf`/`hop`)
-map to Aether/Hephaestus/Prometheus/Hermes edges; each gen mutates one under
-multi-cand snapshot select; composition must stay green (see `notes/evolution-model.md`).  
-`examples/02-live-evolve` = in-memory denseness smoke only.
+**Project evolve** = SPEC + multi-file LLM patch + test score (see `projects/kv/SPEC.md`).  
+Not a single function oscillating. Details: `notes/evolution-model.md`.
 
 ### Logs (continuous)
 

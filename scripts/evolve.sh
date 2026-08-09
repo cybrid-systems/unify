@@ -44,10 +44,12 @@ case "$cmd" in
     export UNIFY_OFFLINE_EVERY="${UNIFY_OFFLINE_EVERY:-3}"
     export UNIFY_AUTO_ISSUE="${UNIFY_AUTO_ISSUE:-1}"
     export UNIFY_SELF_EVOLVE="${UNIFY_SELF_EVOLVE:-0}"
-    export UNIFY_DURABLE_EVOLVE="${UNIFY_DURABLE_EVOLVE:-1}"
+    export UNIFY_PROJECT_EVOLVE="${UNIFY_PROJECT_EVOLVE:-1}"
+    export UNIFY_PROJECT="${UNIFY_PROJECT:-projects/kv}"
+    export UNIFY_DURABLE_EVOLVE="${UNIFY_DURABLE_EVOLVE:-0}"
     export UNIFY_GIT_COMMIT="${UNIFY_GIT_COMMIT:-1}"
     export UNIFY_GIT_PUSH="${UNIFY_GIT_PUSH:-1}"
-    echo "unify evolve (fg) durable=$UNIFY_DURABLE_EVOLVE commit=$UNIFY_GIT_COMMIT push=$UNIFY_GIT_PUSH"
+    echo "unify evolve (fg) project=$UNIFY_PROJECT commit=$UNIFY_GIT_COMMIT push=$UNIFY_GIT_PUSH"
     exec ./scripts/run-continuous.sh
     ;;
   bg|start|"")
@@ -67,25 +69,26 @@ case "$cmd" in
       echo "warn: no MiniMax key — live rounds use force-body offline path"
     fi
     export UNIFY_MAX_CYCLES="${UNIFY_MAX_CYCLES:-0}"
-    export UNIFY_LIVE_N="${UNIFY_LIVE_N:-2}"
-    export UNIFY_SLEEP_SEC="${UNIFY_SLEEP_SEC:-30}"
-    export UNIFY_OFFLINE_EVERY="${UNIFY_OFFLINE_EVERY:-3}"
+    export UNIFY_LIVE_N="${UNIFY_LIVE_N:-1}"
+    export UNIFY_SLEEP_SEC="${UNIFY_SLEEP_SEC:-45}"
+    export UNIFY_OFFLINE_EVERY="${UNIFY_OFFLINE_EVERY:-5}"
     export UNIFY_AUTO_ISSUE="${UNIFY_AUTO_ISSUE:-1}"
     export UNIFY_SELF_EVOLVE="${UNIFY_SELF_EVOLVE:-0}"
-    export UNIFY_DURABLE_EVOLVE="${UNIFY_DURABLE_EVOLVE:-1}"
+    export UNIFY_PROJECT_EVOLVE="${UNIFY_PROJECT_EVOLVE:-1}"
+    export UNIFY_PROJECT="${UNIFY_PROJECT:-projects/kv}"
+    export UNIFY_DURABLE_EVOLVE="${UNIFY_DURABLE_EVOLVE:-0}"
     export UNIFY_GIT_COMMIT="${UNIFY_GIT_COMMIT:-1}"
     export UNIFY_GIT_PUSH="${UNIFY_GIT_PUSH:-1}"
     nohup ./scripts/run-continuous.sh >>"$LOG_ROOT/nohup.out" 2>&1 &
     pid=$!
     sleep 1
     echo "evolve running pid=$pid"
-    echo "  durable evolve + git commit + push: ON"
+    echo "  project-level: $UNIFY_PROJECT (SPEC+tests+LLM patch+commit+push)"
     echo "  status:  $0 status"
     echo "  logs:    tail -f logs/runs/latest/master.log"
-    echo "  state:   cat notes/evolve-state/state.json"
+    echo "  kv tests: AURA_PATH=projects/kv/lib:lib ./scripts/run-aura.sh projects/kv/tests/smoke.aura"
     echo "  stop:    $0 stop"
-    echo "  disable push: UNIFY_GIT_PUSH=0 $0"
-    ./scripts/status.sh 2>/dev/null | head -n 12 || true
+    ./scripts/status.sh 2>/dev/null | head -n 16 || true
     ;;
   *)
     echo "usage: $0 [bg|fg|stop|status]" >&2

@@ -1,44 +1,44 @@
-# Unify evolution model — spacetime denseness explore
+# Unify evolution model — project-level self-evolution
 
-## Entry
+## Intent
 
-```bash
-./scripts/evolve.sh          # control loop
-./scripts/durable-evolve.sh  # one explore generation
+Self-evolve a **software project** under a written SPEC and automated tests,
+the way you would tell an LLM: *“implement a KV database, then keep improving it.”*
+
+Not: mutate one pure function forever (`(* x K)` toys).
+
+## Primary subject: `projects/kv`
+
+| Artifact | Role |
+|----------|------|
+| `SPEC.md` | Product/API roadmap (phases 0–4) |
+| `lib/kv.aura` | Implementation (grows over generations) |
+| `tests/smoke.aura` | Acceptance suite → `SCORE n/m` |
+| `evolve/state.json` | generation, best score, history |
+| `evolve/last-patch.md` | last LLM proposal |
+
+## Loop (`scripts/project-evolve.sh`)
+
+```text
+baseline tests → SCORE b/t
+  → MiniMax reads SPEC + sources + fail tail
+  → multi-file patch (FILE path + fenced body)
+  → apply in sandbox copy of project
+  → run tests → SCORE c/t
+  → accept only if score improves (or full green)
+  → copy into projects/kv → git commit + push
 ```
 
-## Use case (not the old ×K ladder)
+Continuous entry: `./scripts/evolve.sh` (default `UNIFY_PROJECT=projects/kv`).
 
-**Software spacetime free explore** across four denseness edges in **one** workspace:
+## Relation to four spans
 
-| axis | span | denseness edge |
-|------|------|----------------|
-| `score` | Aether | free pure decision metrics (linear / poly / products…) |
-| `kernel` | Hephaestus | closed-form numeric kernel (triangle numbers) |
-| `leaf` | Prometheus | pure homogeneous map (scale surface) |
-| `hop` | Hermes | pure ring routing (topology core) |
+- **Offline smoke** still exercises Aether/Hephaestus/Prometheus/Hermes denseness.
+- **Project evolve** is the *product* denseness probe: long-running pure-Aura
+  software object with growing surface area — where host residuals show up as
+  real engineering friction (define-after-mutate, FS escapes for later phases).
 
-Each generation:
+## Legacy
 
-1. Pick one axis (round-robin).
-2. Propose **diverse** candidates (catalog + MiniMax free propose + intentional **boundary fails**).
-3. `query :find` locus → multi-cand **snapshot sandbox** → fitness.
-4. Winner applies only if **composition still holds** (all four oracles green).
-5. Persist `state.json` + readable `subject.aura` + `frontier.jsonl` for failed edge samples.
-
-This is **divergent exploration of denseness boundaries**: intentional failing candidates probe where pure-Aura verify rejects vs host residual; composition pressure keeps four spans co-present.
-
-## Aura surfaces
-
-| Primitive | Role |
-|-----------|------|
-| `(query :find "name")` | local locus |
-| `(mutate:rebind name body …)` | name-local mutation |
-| `(ast:snapshot)` / `(ast:restore)` | candidate sandbox |
-| body strings in `state.json` | source of truth until host `query:code` exists |
-
-## What is *not* claimed
-
-- Full four-span *workload* co-mutation every tick (Hephaestus load soak / Hermes TCP still in offline smoke).
-- AST→`.aura` decompile (host gap).
-- Business product logic — this is denseness synthesis exploration.
+`scripts/durable-evolve.sh` four-axis pure functions remain available via
+`UNIFY_DURABLE_EVOLVE=1` but are **off by default**.

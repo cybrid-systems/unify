@@ -9,19 +9,20 @@ LATEST="$LOG_ROOT/latest"
 echo "=== Unify continuous status ==="
 echo "log_root: $LOG_ROOT"
 
+if [[ -f "$ROOT/projects/kv/evolve/state.json" ]]; then
+  echo "project(kv):"
+  python3 -c '
+import json
+s=json.load(open("'"$ROOT"'/projects/kv/evolve/state.json"))
+print("  gen=%s best=%s/%s status=%s" % (s.get("generation"), s.get("best_score"), s.get("best_total"), s.get("status")))
+' 2>/dev/null || true
+fi
 if [[ -f "$ROOT/notes/evolve-state/state.json" ]]; then
-  echo "evolve-state:"
+  echo "function-axis explore (legacy):"
   python3 -c '
 import json
 s=json.load(open("'"$ROOT"'/notes/evolve-state/state.json"))
 print("  mode=%s gen=%s last=%s/%s" % (s.get("mode"), s.get("generation"), s.get("last_axis"), s.get("last_span")))
-subs=s.get("subjects") or {}
-if subs:
-  for k in ("score","kernel","leaf","hop"):
-    if k in subs:
-      print("  %s: %s" % (k, subs[k].get("body")))
-else:
-  print("  body=%s factor=%s" % (s.get("body"), s.get("factor")))
 ' 2>/dev/null || true
 fi
 

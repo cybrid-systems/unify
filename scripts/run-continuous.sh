@@ -16,8 +16,10 @@
 #   UNIFY_AUTO_ISSUE      allow API create after 定界 (default 1); still requires
 #                         class=host + confidence=high from classify-failure.py
 #   UNIFY_SELF_EVOLVE     1 = MiniMax proposal for unify-self bugs (default 0)
-#   UNIFY_DURABLE_EVOLVE  1 = run durable-evolve each cycle (default 1)
-#   UNIFY_GIT_COMMIT      1 = commit notes/evolve-state on success (default 1)
+#   UNIFY_PROJECT_EVOLVE  1 = project-level evolve (default 1) e.g. projects/kv
+#   UNIFY_PROJECT         path (default projects/kv)
+#   UNIFY_DURABLE_EVOLVE  1 = also run function-axis explore (default 0)
+#   UNIFY_GIT_COMMIT      1 = commit on success (default 1)
 #   UNIFY_GIT_PUSH         1 = git push after commit (default 1)
 #   UNIFY_STOP_FILE       path; if exists, exit after current cycle
 #   UNIFY_AURA_REPO       default cybrid-systems/aura
@@ -42,8 +44,11 @@ STOP_FILE="${UNIFY_STOP_FILE:-$LOG_ROOT/STOP}"
 export UNIFY_AUTO_ISSUE="${UNIFY_AUTO_ISSUE:-1}"
 # Optional MiniMax proposal for Unify-owned bugs (never auto-commit).
 export UNIFY_SELF_EVOLVE="${UNIFY_SELF_EVOLVE:-0}"
-# Durable evolution (persists subject + optional git commit). Default ON.
-export UNIFY_DURABLE_EVOLVE="${UNIFY_DURABLE_EVOLVE:-1}"
+# Project-level evolution (KV store etc.) is the primary self-evo subject.
+export UNIFY_PROJECT_EVOLVE="${UNIFY_PROJECT_EVOLVE:-1}"
+export UNIFY_PROJECT="${UNIFY_PROJECT:-projects/kv}"
+# Old single-function denseness explore — off by default.
+export UNIFY_DURABLE_EVOLVE="${UNIFY_DURABLE_EVOLVE:-0}"
 export UNIFY_GIT_COMMIT="${UNIFY_GIT_COMMIT:-1}"
 export UNIFY_GIT_PUSH="${UNIFY_GIT_PUSH:-1}"
 
@@ -262,22 +267,33 @@ while true; do
     c_fail=$((c_fail + 1))
   fi
 
-  # Durable evolve: persist subject factor ladder + git commit (real evolution)
-  if [[ "${UNIFY_DURABLE_EVOLVE}" == "1" ]]; then
-    if run_step "durable-evolve" \
-      "./scripts/durable-evolve.sh" \
-      "RESULT pass durable-evolve" \
-      "$cdir/durable-evolve.log"; then
+  # Project-level evolve (e.g. KV store under SPEC + tests)
+  if [[ "${UNIFY_PROJECT_EVOLVE}" == "1" ]]; then
+    if run_step "project-evolve" \
+      "./scripts/project-evolve.sh ${UNIFY_PROJECT}" \
+      "RESULT pass project-evolve" \
+      "$cdir/project-evolve.log"; then
       c_ok=$((c_ok + 1))
-      # Surface last commit if any
-      if git log -1 --oneline 2>/dev/null | grep -q '^.*evolve:'; then
+      if git log -1 --oneline 2>/dev/null | grep -qE 'project\(|explore:'; then
         log "git tip: $(git log -1 --oneline)"
       fi
     else
       c_fail=$((c_fail + 1))
     fi
   else
-    log "skip durable-evolve (UNIFY_DURABLE_EVOLVE=0)"
+    log "skip project-evolve (UNIFY_PROJECT_EVOLVE=0)"
+  fi
+
+  # Optional legacy function-axis denseness explore
+  if [[ "${UNIFY_DURABLE_EVOLVE}" == "1" ]]; then
+    if run_step "durable-evolve" \
+      "./scripts/durable-evolve.sh" \
+      "RESULT pass durable-evolve" \
+      "$cdir/durable-evolve.log"; then
+      c_ok=$((c_ok + 1))
+    else
+      c_fail=$((c_fail + 1))
+    fi
   fi
 
   {
