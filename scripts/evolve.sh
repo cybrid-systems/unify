@@ -95,6 +95,7 @@ start_loop() {
   fi
   start_watchdog
   echo "  project: $UNIFY_PROJECT (state in workspace; survives restart)"
+  echo "  plant:   adaptive in-mem KV — load-sim → retune index/cache (infinite)"
   echo "  fiber:   N=${UNIFY_FIBER_N} keys=${UNIFY_FIBER_KEYS} waves=${UNIFY_FIBER_WAVES:-4} batch=${UNIFY_FIBER_BATCH:-16} stress=${UNIFY_FIBER_STRESS}"
   echo "  LLM: 1 call/gen timeout=${UNIFY_LLM_TIMEOUT}s x${UNIFY_LLM_RETRIES}"
   echo "  status:  $0 status"
