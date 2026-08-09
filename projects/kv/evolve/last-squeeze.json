@@ -1,11 +1,11 @@
 {
-  "ts": "2026-08-09T12:54Z",
+  "ts": "2026-08-09T12:56Z",
   "mode": "alist",
   "cache": 0,
   "thr": 9999,
-  "grid_best_score": "6482",
-  "verify_score": "2915",
+  "grid_best_score": "5631",
+  "verify_score": "9228",
   "applied": true,
-  "baseline": "3037",
+  "baseline": "7519",
   "jobs": 8
 }
