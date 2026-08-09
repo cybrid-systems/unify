@@ -10,3 +10,16 @@ notes/self-evolve/
 .env
 *.pem
 keys/
+
+# Aura daemon IPC / runtime (cross-cycle process; not source of truth)
+projects/kv/evolve/daemon-cmd
+projects/kv/evolve/daemon-result
+projects/kv/evolve/daemon-status
+projects/kv/evolve/daemon.pid
+projects/kv/evolve/squeeze-gain.flag
+# optional: any project evolve daemon knobs
+**/evolve/daemon-cmd
+**/evolve/daemon-result
+**/evolve/daemon-status
+**/evolve/daemon.pid
+**/evolve/squeeze-gain.flag
