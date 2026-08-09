@@ -981,6 +981,103 @@
   (t "T76-incr-multi"
      (= (kv:get s "c") 13)))
 
+; ---- Phase 14: bulk-transformation / merging / counting / value-only filter ----
+
+; T77: update-keys() transforms keys via caller-supplied proc; insertion
+; order of survivors tracks the source order.
+(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
+       (r (kv:update-keys s
+              (lambda (k)
+                (if (equal? k "a") "x"
+                  (if (equal? k "b") "y" "z")))))
+       (rk (kv:keys r)))
+  (t "T77-update-keys"
+     (and (= (kv:size r) 3)
+          (eq? (kv:has? r "a") #f)
+          (eq? (kv:has? r "b") #f)
+          (eq? (kv:has? r "c") #f)
+          (equal? (kv:get r "x") 1)
+          (equal? (kv:get r "y") 2)
+          (equal? (kv:get r "z") 3)
+          (equal? (car rk) "x")
+          (equal? (car (cdr rk)) "y")
+          (equal? (car (cdr (cdr rk))) "z"))))
+
+; T77b: update-keys() on a key collision: first-occurrence wins
+; (consistent with kv:invert's first-occurrence semantics).
+(let* ((s (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
+       (r (kv:update-keys s (lambda (k) "x"))))
+  (t "T77b-update-keys-collision"
+     (and (= (kv:size r) 1)
+          (equal? (kv:get r "x") 1))))
+
+; T77c: update-keys() on an empty store is empty.
+(t "T77c-update-keys-empty"
+   (= (kv:size (kv:update-keys (kv:open) (lambda (k) k))) 0))
+
+; T78: merge-with() combines shared keys via caller-supplied combiner;
+; a's order preserved for shared keys; b-only keys appended in b's order.
+(let* ((a (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3))
+       (b (kv:set (kv:set (kv:set (kv:open) "b" 20) "c" 30) "d" 4))
+       (r (kv:merge-with a b (lambda (x y) (+ x y))))
+       (rk (kv:keys r)))
+  (t "T78-merge-with"
+     (and (= (kv:size r) 4)
+          (equal? (kv:get r "a") 1)
+          (equal? (kv:get r "b") 22)
+          (equal? (kv:get r "c") 33)
+          (equal? (kv:get r "d") 4)
+          (equal? (car rk) "a")
+          (equal? (car (cdr rk)) "b")
+          (equal? (car (cdr (cdr rk))) "c")
+          (equal? (car (cdr (cdr (cdr rk)))) "d"))))
+
+; T78b: merge-with() with disjoint operands equals union; combiner is
+; never called when there are no shared keys.
+(let* ((calls 0)
+       (a (kv:set (kv:set (kv:open) "a" 1) "b" 2))
+       (b (kv:set (kv:set (kv:open) "c" 3) "d" 4))
+       (r (kv:merge-with a b
+              (lambda (x y) (set! calls (+ calls 1)) (+ x y)))))
+  (t "T78b-merge-with-disjoint"
+     (and (= calls 0)
+          (= (kv:size r) 4)
+          (equal? (kv:get r "a") 1)
+          (equal? (kv:get r "d") 4))))
+
+; T78c: merge-with() with an empty operand is identity on the other side.
+(t "T78c-merge-with-empty"
+   (let* ((a (kv:set (kv:set (kv:open) "a" 1) "b" 2)))
+     (and (kv:equal? (kv:merge-with a (kv:open) (lambda (x y) (+ x y))) a)
+          (kv:equal? (kv:merge-with (kv:open) a (lambda (x y) (+ x y))) a))))
+
+; T79: count-value() counts entries with structurally equal value.
+(let* ((s (kv:set (kv:set (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 1) "d" 3) "e" 1)))
+  (t "T79-count-value"
+     (and (= (kv:count-value s 1) 3)
+          (= (kv:count-value s 2) 1)
+          (= (kv:count-value s 3) 1)
+          (= (kv:count-value s 99) 0)
+          (= (kv:count-value (kv:open) 1) 0))))
+
+; T80: filter-values() keeps entries whose value passes the predicate;
+; survivor order tracks the source.
+(let* ((s (kv:set (kv:set (kv:set (kv:set (kv:open) "a" 1) "b" 2) "c" 3) "d" 4))
+       (r (kv:filter-values s (lambda (v) (> v 2))))
+       (rk (kv:keys r)))
+  (t "T80-filter-values"
+     (and (= (kv:size r) 2)
+          (equal? (kv:get r "c") 3)
+          (equal? (kv:get r "d") 4)
+          (eq? (kv:get r "a") #f)
+          (eq? (kv:get r "b") #f)
+          (equal? (car rk) "c")
+          (equal? (car (cdr rk)) "d"))))
+
+; T80b: filter-values() on an empty store is empty.
+(t "T80b-filter-values-empty"
+   (= (kv:size (kv:filter-values (kv:open) (lambda (v) #t))) 0))
+
 (display "SCORE ")
 (display pass)
 (display "/")

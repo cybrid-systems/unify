@@ -21,6 +21,8 @@
 ;             (union, symmetric-difference, reverse, frequencies).
 ; Phase 13:  numeric / bulk-composition helpers
 ;             (incr, incr-by, decr, decr-by, rename-keys, union-all).
+; Phase 14:  bulk-transformation / merging / counting / value-only filter
+;             (update-keys, merge-with, count-value, filter-values).
 ;
 ; Store representation: alist of (key . val) pairs.
 ;   * Keys are strings.
@@ -92,9 +94,13 @@
         kv:decr
         kv:decr-by
         kv:rename-keys
-        kv:union-all)
+        kv:union-all
+        kv:update-keys
+        kv:merge-with
+        kv:count-value
+        kv:filter-values)
 
-(define kv:version 13)
+(define kv:version 14)
 
 ; ---------------------------------------------------------------------------
 ; Internal alist primitives.
@@ -1098,3 +1104,110 @@
         (if (pair? s)
           (loop (cdr xs) (kv:union acc s))
           (loop (cdr xs) acc))))))
+
+; ---------------------------------------------------------------------------
+; Phase 14 bulk-transformation / merging / counting / value-only filter.
+; Pure functional; insertion order preserved by construction; no FS
+; escapes; no API renames; no exports removed. All derive from existing
+; alist primitives (`_fold`, `_set`, `_has`, `_ref`) and from the
+; Phase 6 public ops (`kv:count`) — no new internal helpers required.
+;
+; Conventions:
+;   * `kv:update-keys` folds the source store left-to-right and writes
+;     `(proc k) -> v` into a fresh accumulator. On a collision (two
+;     source keys mapping to the same new key) the FIRST occurrence
+;     wins and later duplicates are dropped — consistent with
+;     `kv:invert`'s first-occurrence semantics and with the "earlier
+;     source position wins" insertion-order rule used by every op in
+;     the store. Uses `kv:_set` directly (no string?-key guard) because
+;     the new keys are caller-supplied projections, not fresh `kv:set`
+;     writes — same posture as `kv:invert`.
+;   * `kv:merge-with` generalises `kv:merge` by letting the caller pick
+;     how shared-key values combine. `a`'s insertion order is preserved
+;     for shared keys (with `(proc a-v b-v)` as the new value); `b`-only
+;     keys are appended at the end in `b`'s iteration order. Built as a
+;     fold over `a` to compute the shared-key set, then a fold over `b`
+;     to append b-only keys — no intermediate alist materialised.
+;     `proc` is called only for keys present in BOTH operands; for
+;     disjoint operands the result is identical to `kv:union`.
+;   * `kv:count-value` is a thin wrapper over `kv:count`: counts
+;     entries whose value is structurally equal to `val`. Provided for
+;     symmetry with `kv:has?` (key-presence) — together they cover
+;     "presence on either axis" without exposing the (k . v) pair
+;     shape to the caller.
+;   * `kv:filter-values` is the value-only projection of `kv:filter`:
+;     keeps entries for which `(proc v)` is `#t`, drops the rest.
+;     Complements `kv:filter (proc k v)` by removing the key argument
+;     when the caller only cares about the value side. Preserves the
+;     survivor's original insertion order (single fold over the source
+;     in insertion order; `kv:_set` appends).
+; ---------------------------------------------------------------------------
+
+; (kv:update-keys store proc) -> store.
+; Apply `(proc k)` to each key. Folds `store` left-to-right in
+; insertion order; for each (k, v), computes (new-k = (proc k)) and
+; (if new-k is not already in the accumulator) writes (new-k -> v)
+; into acc. On a collision (two source keys mapping to the same
+; new-k) the FIRST occurrence wins and later duplicates are dropped
+; — consistent with `kv:invert`'s first-occurrence semantics.
+; Insertion order of the result tracks the source's order. Uses
+; `kv:_set` directly (no string?-key guard) because the new keys are
+; caller-supplied projections, not fresh `kv:set` writes — same
+; posture as `kv:invert`. Non-pair cells in `store` are skipped
+; defensively (via `_fold`).
+(define (kv:update-keys store proc)
+  (kv:_fold store (quote ())
+    (lambda (k v acc)
+      (let ((new-k (proc k)))
+        (if (kv:_has acc new-k)
+          acc
+          (kv:_set acc new-k v))))))
+
+; (kv:merge-with a b proc) -> store.
+; Right-biased merge with caller-supplied combiner. For each key
+; shared between `a` and `b`, writes (proc a-v b-v) as the new value
+; (replacing both operands' values). For each `a`-only key, writes
+; `a`'s value as-is. For each `b`-only key, writes `b`'s value at
+; the end in `b`'s iteration order. Built as a fold over `a` to
+; compute the shared-key set (with combiner applied), then a fold
+; over `b` that appends the b-only keys — `kv:_set`'s "append on
+; miss" behaviour does the rest. The insertion order of `a` is
+; preserved for shared keys; b-only keys are appended at the end in
+; b's order. For disjoint operands, no key is shared, so `proc` is
+; never called and the result is identical to `kv:union`.
+(define (kv:merge-with a b proc)
+  (let ((base
+          (kv:_fold a (quote ())
+            (lambda (k va acc)
+              (if (kv:_has b k)
+                (kv:_set acc k (proc va (kv:_ref b k)))
+                (kv:_set acc k va))))))
+    (kv:_fold b base
+      (lambda (k vb acc)
+        (if (kv:_has a k)
+          acc
+          (kv:_set acc k vb))))))
+
+; (kv:count-value store val) -> integer.
+; Number of entries whose value is structurally equal to `val`. Thin
+; wrapper over `kv:count` — provided for symmetry with `kv:has?`
+; (key-presence). Returns 0 on an empty store. A stored `#f` value
+; matches `#f` (equal? agrees on `#f`); a missing entry never
+; matches anything.
+(define (kv:count-value store val)
+  (kv:count store (lambda (k v) (equal? v val))))
+
+; (kv:filter-values store proc) -> store.
+; Sub-store of entries for which `(proc v)` is `#t`. Folds `store`
+; left-to-right in insertion order; keeps an entry (writing k -> v
+; into the accumulator, which appends in source order) iff `(proc v)`
+; is `#t`. Complements `kv:filter (proc k v)` by removing the key
+; argument when the caller only cares about the value side. Insertion
+; order of survivors follows the source. Non-pair cells in `store`
+; are skipped defensively (via `_fold`).
+(define (kv:filter-values store proc)
+  (kv:_fold store (quote ())
+    (lambda (k v acc)
+      (if (proc v)
+        (kv:_set acc k v)
+        acc))))
