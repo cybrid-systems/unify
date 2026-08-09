@@ -1,7 +1,7 @@
 {
   "mode": "spacetime-explore",
-  "generation": 13,
-  "axis_cursor": 1,
+  "generation": 14,
+  "axis_cursor": 2,
   "subjects": {
     "score": {
       "span": "aether",
@@ -180,10 +180,22 @@
       "candidates_n": 9,
       "fitness": 1000,
       "mode": "spacetime-explore"
+    },
+    {
+      "ts": "2026-08-09T04:49Z",
+      "generation": 14,
+      "axis": "kernel",
+      "span": "hephaestus",
+      "from_body": "(lambda (n) (/ (* n (- n 1)) 2))",
+      "to_body": "(lambda (n) (/ (* n (- n 1)) 2))",
+      "tried": 5,
+      "candidates_n": 5,
+      "fitness": 1000,
+      "mode": "spacetime-explore"
     }
   ],
   "status": "ok",
-  "updated": "2026-08-09T04:48Z",
-  "last_axis": "score",
-  "last_span": "aether"
+  "updated": "2026-08-09T04:49Z",
+  "last_axis": "kernel",
+  "last_span": "hephaestus"
 }
