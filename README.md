@@ -69,21 +69,17 @@ Override with `AURA_BIN`, `AURA_ROOT`, `AETHER_ROOT`, etc.
 ## Quick start
 
 ```bash
-# Offline: one smoke probe from each span (no API key)
+# 一键自进化（后台）
+./scripts/start.sh
+./scripts/start.sh status
+./scripts/start.sh stop
+
+# Offline smoke (no API key)
 ./scripts/run-offline.sh
 
-# Live evolve (MiniMax-M3)
+# Single live evolve
 source ./scripts/env-minimax.sh
 ./scripts/run-aura.sh examples/02-live-evolve/main.aura
-
-# Continuous loop (offline + live×N + git probe; draft issues unless UNIFY_AUTO_ISSUE=1)
-source ./scripts/env-minimax.sh
-./scripts/run-continuous.sh          # forever; logs under logs/runs/latest/
-./scripts/status.sh                  # pid / last events / failures
-# touch logs/runs/STOP               # graceful stop after current cycle
-
-# Finite overnight (one cycle, N live rounds)
-UNIFY_OVERNIGHT_N=20 ./scripts/overnight.sh
 ```
 
 ### Logs (continuous)
