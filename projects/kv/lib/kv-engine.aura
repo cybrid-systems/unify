@@ -39,7 +39,10 @@
         kv:engine-stats
         kv:engine-policy
         kv:engine-tune
-        kv:engine-version)
+        kv:engine-version
+        kv:pol-mode
+        kv:pol-cache
+        kv:pol-thr)
 
 (require "kv" all:)
 
@@ -62,6 +65,9 @@
 (define (kv:_mk-eng body index cache stats policy)
   (list (quote kv-engine) body index cache stats policy))
 
+(define kv:pol-mode "alist")
+(define kv:pol-cache 0)
+(define kv:pol-thr 9999)
 (define (kv:_default-policy) (list "alist" 0 9999))
 (define (kv:_zero-stats) (list 0 0 0 0 0))
 
