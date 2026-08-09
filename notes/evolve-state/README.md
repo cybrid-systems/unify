@@ -3,10 +3,10 @@
 | field | value |
 |-------|-------|
 | mode | spacetime-explore |
-| generation | 39 |
-| last axis | leaf (prometheus) |
-| winner body | `(lambda (x) (* x 1))` |
-| candidates tried | 7/7 |
+| generation | 40 |
+| last axis | hop (hermes) |
+| winner body | `(lambda (i) (if (= i 0) 1 (if (= i 1) 2 0)))` |
+| candidates tried | 5/5 |
 
 ## Four axes (composition)
 
