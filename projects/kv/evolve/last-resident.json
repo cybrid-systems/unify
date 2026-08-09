@@ -1,14 +1,14 @@
 {
-  "ts": "2026-08-09T13:20Z",
+  "ts": "2026-08-09T13:25Z",
   "mode": "alist",
   "cache": 0,
   "thr": 9999,
-  "resident_score": "3429",
-  "verify_score": "4301",
-  "applied": false,
-  "mutate_ops": 62,
-  "total_ms": 23252,
-  "gens": 2,
+  "resident_score": "5466",
+  "verify_score": "6064",
+  "applied": true,
+  "mutate_ops": 93,
+  "total_ms": 154467,
+  "gens": 3,
   "cold_starts": 1,
   "path": "resident-multi-gen"
 }
