@@ -1,21 +1,15 @@
 # Controller REVIEW
 
-- All 25/25 green; Phases 0–5 of the lib comment roadmap are implemented (open, set/get, del/has?/size, keys/clear, multi-key stress + isolation, batch helpers, iteration & query helpers).
-- Pure Aura throughout — store is a functional alist of `(key . val)` pairs; insertion order is preserved everywhere; no FS / no network / no host escape used.
-- The SPEC table lists phases only through Phase 4 (batch helpers); Phase 5 (iteration/query) was a home-grown extension that we already locked in at gen 4. We have headroom for a new phase without disturbing any green test.
-- Denseness posture is strong: every public op derives from `_fold` / `_map` / `_set` / `_del`. The one subtle weakness to call out is "any value lookup that is legitimately `#f` is indistinguishable from a miss" — it is consistent with `kv:get`'s contract but worth a one-line note for `kv:pick`.
-- Export-before-define order has held across gens 1–4; no define-after-mutate hazard has bitten us.
+- **Strengths**: Phases 0–6 of the in-file roadmap are implemented; alist-of-cons representation is robust (defensive against stray non-pair cells) and all iterators preserve insertion order. Pure Aura, no FS escapes, export-before-define discipline intact, version bumped to 4.
+- **Failure**: **T27-pick FAIL** — `kv:pick` iterates over the *requested-keys list* and `kv:_set`s each survivor into `acc`, so the resulting order is the keys-list order, not the store's insertion order. The test (and the doc comment I wrote myself) explicitly require store-order: `pk = ("a" "c")` not `("c" "a")`. This is a **semantic bug**, not a host risk.
+- **Other**: All 32 other tests pass — no regressions in `omit`/`map-values`/`filter`/`merge`. The `kv:version` comment block still says "Phase 6" but `kv:version` is `4`; will nudge to `5` for traceability.
 
 # DIRECTION
 
-- **Advance to Phase 6: fold / predicate / projection / selection helpers.** Everything pure-functional, derived from existing `_fold`/`_map` primitives, insertion-order preserved.
-- New ops, all distinct from Phase 5:
-  - `kv:reduce` — `(store init proc)` left fold, `proc` is `(k v acc) -> acc`
-  - `kv:any?`  — short-circuit existential; `#f` on empty (vacuous)
-  - `kv:every?` — short-circuit universal; `#t` on empty (vacuous)
-  - `kv:pick`  — sub-store of listed keys; missing keys dropped; order follows `store`
-  - `kv:omit`  — sub-store minus listed keys; survivors keep order
-  - `kv:map-values` — transform values via `(proc v)`; keys + order preserved
-- Bump `kv:version` from `3` to `4`.
-- Extend `tests/smoke.aura` with **T24–T29** (8 new tests) covering happy paths *and* empty-store / boundary semantics.
-- **Do not touch** internals (`kv:_ref`/`_has`/`_set`/`_del`/`_fold`/`_map`) or Phases 0–5 APIs. No FS escapes.
+- **Target phase**: fix the `kv:pick` ordering bug to land 33/33. This is a same-phase bugfix (still Phase 6), no SPEC phase advancement. Don't touch any other op — they're individually covered by tests.
+- **Ops to touch**:
+  - Add internal `kv:_mem` helper (membership test, not exported).
+  - Rewrite `kv:pick` to walk **the store** (via `kv:_fold`) and keep only entries whose key is in the requested-keys list — this guarantees store-insertion-order among survivors, matching the doc comment and T27's expectation.
+  - Bump `kv:version` `4 → 5`.
+  - Add two tiny edge tests T27b/T27c in `tests/smoke.aura` (empty key list; all-missing key list) so this regression class is locked down.
+- **Do NOT touch**: `kv:_set`, `kv:_fold`, `kv:_map`, `kv:_del`, `kv:mset`, `kv:merge`, `kv:update`, `kv:filter`, `kv:find`, `kv:values`, `kv:entries`, `kv:reduce`, `kv:any?`, `kv:every?`, `kv:omit`, `kv:map-values`, `kv:keys`, `kv:for-each`. All verified green.

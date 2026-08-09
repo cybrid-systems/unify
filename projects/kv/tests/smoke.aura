@@ -207,6 +207,20 @@
           (equal? (car pk) "a")
           (equal? (car (cdr pk)) "c"))))
 
+; T27b: pick() with an empty key list returns an empty store.
+(t "T27b-pick-empty-keys"
+   (= (kv:size
+        (kv:pick (kv:set (kv:set (kv:open) "a" 1) "b" 2)
+                 (quote ())))
+      0))
+
+; T27c: pick() where no listed key is present returns an empty store.
+(t "T27c-pick-all-missing"
+   (= (kv:size
+        (kv:pick (kv:set (kv:set (kv:open) "a" 1) "b" 2)
+                 (list "x" "y" "z")))
+      0))
+
 ; T28: omit() removes listed keys, preserves survivor order.
 (let* ((s (kv:open))
        (s (kv:set s "a" 1))

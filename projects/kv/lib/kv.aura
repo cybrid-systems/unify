@@ -43,7 +43,7 @@
         kv:omit
         kv:map-values)
 
-(define kv:version 4)
+(define kv:version 5)
 
 ; ---------------------------------------------------------------------------
 ; Internal alist primitives.
@@ -107,6 +107,18 @@
         (if (pair? p)
           (cons (f (car p) (cdr p)) rest)
           rest)))))
+
+; (kv:_mem key xs) -> #t | #f.
+; True iff `key` appears in list `xs` (compared with equal?).
+; Internal helper; not exported. Used by kv:pick to test whether a
+; store key is among the requested keys without leaking membership-test
+; semantics into the public namespace.
+(define (kv:_mem key xs)
+  (if (null? xs)
+    #f
+    (if (equal? (car xs) key)
+      #t
+      (kv:_mem key (cdr xs)))))
 
 ; ---------------------------------------------------------------------------
 ; Phase 0..2 public API
@@ -273,13 +285,11 @@
 ; Note: a value that is literally #f cannot be distinguished from a
 ; miss — documented limitation consistent with kv:get.
 (define (kv:pick store keys)
-  (let loop ((xs keys) (acc (quote ())))
-    (if (null? xs)
-      acc
-      (let ((k (car xs)))
-        (if (kv:_has store k)
-          (loop (cdr xs) (kv:_set acc k (kv:_ref store k)))
-          (loop (cdr xs) acc))))))
+  (kv:_fold store (quote ())
+    (lambda (k v acc)
+      (if (kv:_mem k keys)
+        (kv:_set acc k v)
+        acc))))
 
 ; (kv:omit store keys) -> new store with the listed keys removed.
 ; Preserves insertion order of the survivors. Missing keys are a no-op.
