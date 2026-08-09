@@ -81,4 +81,4 @@
       (loop (cdr xs) (+ n 1)))))
 
 (define (kv:clear store)
-  (quote ())))
+  (quote ()))

@@ -1,8 +1,8 @@
 {
   "project": "projects/kv",
-  "generation": 1,
-  "best_score": 12,
-  "best_total": 12,
+  "generation": 2,
+  "best_score": 17,
+  "best_total": 17,
   "status": "ok",
   "history": [
     {
@@ -12,7 +12,15 @@
       "reason": "score-improved",
       "baseline": "9/12",
       "candidate": "12/12"
+    },
+    {
+      "ts": "2026-08-09T05:19Z",
+      "generation": 2,
+      "accepted": true,
+      "reason": "full-green",
+      "baseline": "17/17",
+      "candidate": "17/17"
     }
   ],
-  "updated": "2026-08-09T05:18Z"
+  "updated": "2026-08-09T05:19Z"
 }
